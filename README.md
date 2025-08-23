@@ -2,6 +2,23 @@ WORK-IN-PROGRESS!
 
 This project runs privately and delivers email digests to the project owner only. It is intended strictly for personal, educational use and does not redistribute MLB data.
 
+## Common derived metrics computed in this project
+
+**Hitters**
+
+- `AVG = H / AB` (guard `AB > 0`)
+- `OBP = (H + BB + HBP) / (AB + BB + HBP + SF)`
+- `SLG = TB / AB` *(TB = 1B + 2*2B + 3*3B + 4*HR)\*
+- `OPS = OBP + SLG`
+
+**Pitchers**
+
+- `IP (float) = outs / 3` (or parse `inningsPitched`)
+- `ERA = (ER * 9) / IP` (guard `IP > 0`)
+- `WHIP = (BB + H) / IP` (guard `IP > 0`)
+
+See docs/glossary.md in case the above acronyms do not mean much to you yet.
+
 ## ⚠️ Disclaimer
 
 This project uses MLB’s public Stats API (`statsapi.mlb.com`) to fetch baseball data.
