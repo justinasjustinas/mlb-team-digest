@@ -148,7 +148,19 @@ liveData.boxscore.teams.{home|away}.players
 
 ---
 
-## 8) Example: safe innings conversion (can see it in game_digest.py)
+## 8) Example: Preference for outs with safe innings conversion (can see it in game_digest.py)
+
+In baseball box scores, Innings Pitched (IP) is often given in two formats:
+
+1. As total outs (e.g., outs = 19)
+   → 19 outs = 6 innings + 1 out = 6⅓ innings.
+
+2. As a shorthand string (e.g., "6.1" or "6.2")
+   "6.1" means 6 innings + 1 out = 6⅓.
+   "6.2" means 6 innings + 2 outs = 6⅔.
+
+These don’t look like normal decimals (because .1 ≠ one tenth — it means one out, which is ⅓ of an inning).
+Therefore, this function converts either representation into a decimal float you can do math with:
 
 ```python
 def ip_to_float(ip_str: str | None, outs: int | None) -> float:
