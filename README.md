@@ -13,6 +13,7 @@ This project runs privately and delivers a simple digest of the latest game for 
 - Figure out the container image for cloud run.
 - Test all of the above.
 - Update README with deployment steps, variable setup, etc.
+- Add core metrics, namely AVG, OBP, SLG, OPS, ERA and WHIP.
 - Let `--team` param accept names/abbreviations (nicer CLI).
 - Figure out a smart way to perform data validation tests.
 - And more...
