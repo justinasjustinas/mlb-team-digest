@@ -6,7 +6,6 @@ This project runs privately and delivers a simple digest of the latest game for 
 
 ## Next steps
 
-- Add pytest tests (yes, I should have started with that, perhaps).
 - Create a Dockerfile.
 - Create `infra/gcp/*` or `infra/aws/*` Terraform files.
 - Create a project in CGP or AWS and authenticate Terraform with permissions on that project.
@@ -14,7 +13,9 @@ This project runs privately and delivers a simple digest of the latest game for 
 - Test all of the above.
 - Update README with deployment steps, variable setup, etc.
 - Add core metrics, namely AVG, OBP, SLG, OPS, ERA and WHIP.
+- Add --beginner parameter to return a beginner-friendly digest.
 - Let `--team` param accept names/abbreviations (nicer CLI).
+- Figure out a more neutral approach to timezones.
 - Figure out a smart way to perform data validation tests.
 - And more...
 
