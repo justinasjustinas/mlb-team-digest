@@ -1,22 +1,44 @@
-WORK-IN-PROGRESS!
+## MLB Team Digest
 
-This project runs privately and delivers email digests to the project owner only. It is intended strictly for personal, educational use and does not redistribute MLB data.
+Please note that I'm rather new to baseball, let alone baseball stats. Therefore, consider this **work-in-progress** project as a way to learn more about this fascinating sport and to play around with IaC, certain Cloud concepts, etc.
 
-## Common derived metrics computed in this project
+This project runs privately and delivers a simple digest of the latest game for a selected team. It is intended strictly for personal, educational use and does not redistribute MLB data.
+
+## Next steps
+
+- Add pytest tests (yes, I should have started with that, perhaps).
+- Create a Dockerfile.
+- Create `infra/gcp/*` or `infra/aws/*` Terraform files.
+- Create a project in CGP or AWS and authenticate Terraform with permissions on that project.
+- Figure out the container image for cloud run.
+- Test all of the above.
+- Update README with deployment steps, variable setup, etc.
+- Let `--team` param accept names/abbreviations (nicer CLI).
+- Figure out a smart way to perform data validation tests.
+- And more...
+
+## Derived metrics that we are (or will be) computing in this project
 
 **Hitters**
 
-- `AVG = H / AB` (guard `AB > 0`)
-- `OBP = (H + BB + HBP) / (AB + BB + HBP + SF)`
-- `SLG = TB / AB`
-- `OPS = OBP + SLG`
+- Implemented:
+  - `hitter score = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R`
+- To be implemented:
+  - `AVG = H / AB` (guard `AB > 0`)
+  - `OBP = (H + BB + HBP) / (AB + BB + HBP + SF)`
+  - `SLG = TB / AB`
+  - `OPS = OBP + SLG`
 
 **Pitchers**
 
-- `IP (float) = outs / 3` (or parse `inningsPitched`)
-- `ERA = (ER * 9) / IP` (guard `IP > 0`)
-- `WHIP = (BB + H) / IP` (guard `IP > 0`)
+- Implemented:
+  - `pitcher score = 6*IP + 3*SO - 4*ER - 2*(H + BB) - 3*HR`
+- To be implemented:
+  - `IP (float) = outs / 3` (or parse `inningsPitched`)
+  - `ERA = (ER * 9) / IP` (guard `IP > 0`)
+  - `WHIP = (BB + H) / IP` (guard `IP > 0`)
 
+See docs/custom_metrics.md for the full overview of how custom metrics, such as hitter score and pitcher score are calculated.
 See docs/glossary.md in case the above acronyms do not mean much to you yet.
 
 ## ⚠️ Disclaimer
