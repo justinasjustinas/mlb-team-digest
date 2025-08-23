@@ -1,3 +1,5 @@
+WORK-IN-PROGRESS!
+
 This project runs privately and delivers email digests to the project owner only. It is intended strictly for personal, educational use and does not redistribute MLB data.
 
 ## ⚠️ Disclaimer
