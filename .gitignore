@@ -1,0 +1,17 @@
+# Python venv
+.venv/
+venv/
+env/
+
+# Byte-compiled / cache
+__pycache__/
+*.pyc
+
+# Data directories
+data/raw/
+data/stage/
+data/warehouse/
+
+# OS junk
+.DS_Store
+Thumbs.db
