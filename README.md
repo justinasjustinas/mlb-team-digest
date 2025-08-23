@@ -8,7 +8,7 @@ This project runs privately and delivers email digests to the project owner only
 
 - `AVG = H / AB` (guard `AB > 0`)
 - `OBP = (H + BB + HBP) / (AB + BB + HBP + SF)`
-- `SLG = TB / AB` *(TB = 1B + 2*2B + 3*3B + 4*HR)\*
+- `SLG = TB / AB`
 - `OPS = OBP + SLG`
 
 **Pitchers**
