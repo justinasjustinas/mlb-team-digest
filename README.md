@@ -6,7 +6,7 @@ This project runs privately and delivers a simple digest of the latest game for 
 
 ## Next steps
 
-- Create a Dockerfile.
+- Refactor game_digest.py now that I've decided to use BigQuery.
 - Create `infra/gcp/*` or `infra/aws/*` Terraform files.
 - Create a project in CGP or AWS and authenticate Terraform with permissions on that project.
 - Figure out the container image for cloud run.
