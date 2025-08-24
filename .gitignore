@@ -7,8 +7,11 @@ env/
 __pycache__/
 *.pyc
 
-# Data directories
+# Local data directories
 data/
+
+# README files
+*.md
 
 # OS junk
 .DS_Store
