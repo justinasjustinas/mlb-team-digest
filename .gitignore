@@ -8,9 +8,7 @@ __pycache__/
 *.pyc
 
 # Data directories
-data/raw/
-data/stage/
-data/warehouse/
+data/
 
 # OS junk
 .DS_Store
