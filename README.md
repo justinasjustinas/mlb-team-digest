@@ -6,6 +6,7 @@ This project runs privately and delivers a simple digest of the latest game for 
 
 ## Next steps
 
+- Figure out the image versioning approach.
 - Setup a workflow to send an email with the game digest.
 - Update README with deployment steps, variable setup, etc.
 - Improve tests (datetime.datetime.utcnow() is deprecated).
