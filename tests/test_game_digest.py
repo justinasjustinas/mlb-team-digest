@@ -1,92 +1,203 @@
+# tests/test_game_digest.py
+import json
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
 
 import pytest
 
-import game_digest
-
-def test_ip_to_float_prefers_outs():
-    # When outs is provided, it's used (rounded to 2 decimals)
-    assert game_digest.ip_to_float("6.0", 18) == 6.0
-    assert game_digest.ip_to_float("6.1", 19) == pytest.approx(6.33, rel=1e-3)
-    assert game_digest.ip_to_float(None, 2) == pytest.approx(0.67, rel=1e-3)
-
-def test_ip_to_float_from_string_when_no_outs():
-    assert game_digest.ip_to_float("6.0", None) == 6.0
-    assert game_digest.ip_to_float("6.1", None) == 6.33
-    assert game_digest.ip_to_float("0.2", None) == 0.67
-    assert game_digest.ip_to_float(None, None) == 0.0
+import game_digest as gd
 
 
-def test_hitter_score_formula():
-    # hits=2 (1 single + 1 HR), 1 HR, 1 2B, 0 3B, 1 BB, 1 HBP, 1 SB, 3 RBI, 2 R
-    b = dict(hits=2, homeRuns=1, doubles=1, triples=0, baseOnBalls=1, hitByPitch=1, stolenBases=1, rbi=3, runs=2)
-    # singles = max(H - HR - 2B - 3B, 0) = max(2 - 1 - 1 - 0, 0) = 0
-    expected = 5*1 + 3*(1+0) + 2*(1+1+1) + 1*0 + 1.5*3 + 1.0*2
-    assert game_digest.hitter_score(b) == expected
+# --------------------------
+# Test data helpers
+# --------------------------
 
+TEAM_ID = 112  # Cubs (away in our fixture)
+GAME_DATE = "2025-08-23"
+GAME_ID = 111
 
-def test_team_names_and_which_side():
-    feed = {"gameData": {"teams": {"away": {"id": 119, "name": "Dodgers"}, "home": {"id": 112, "name": "Cubs"}}}}
-    assert game_digest.team_names(feed) == ("Dodgers", "Cubs")
-    assert game_digest.which_side(feed, 119) == "away"
-    assert game_digest.which_side(feed, 112) == "home"
-    with pytest.raises(SystemExit):
-        game_digest.which_side(feed, 161)  # Yankees not in this game
-
-
-def test_get_team_boxscore():
-    feed = {"liveData": {"boxscore": {"teams": {"away": {"team": {"id": 119, "name": "Dodgers"}}}}}}
-    assert game_digest.get_team_boxscore(feed, "away") == {"team": {"id": 119, "name": "Dodgers"}}
-    assert game_digest.get_team_boxscore(feed, "home") == {}
-
-
-def test_batting_line_and_top_hitters():
-    # players must have stats.batting
-    batter_good = {"person": {"fullName": "John Doe"}, "stats": {"batting": {"hits": 2, "atBats": 4, "homeRuns": 1, "rbi": 3, "baseOnBalls": 1}}}
-    batter_bad = {"person": {"fullName": "Bad Hitter"}, "stats": {"batting": {"hits": 0, "atBats": 4}}}
-    team_box = {"players": {"X": batter_good, "Y": batter_bad}}
-
-    # batting_line reads directly from a batting dict
-    line = game_digest.batting_line(batter_good["stats"]["batting"])
-    assert "2-for-4" in line and "1 HR" in line and "3 RBI" in line and "1 BB" in line
-
-    hitters = game_digest.top_hitters(team_box, n=1)
-    assert len(hitters) == 1
-    name, score, line = hitters[0]
-    assert name == "John Doe"
-    assert "2-for-4" in line
-
-
-def test_best_pitcher():
-    # players must have stats.pitching
-    pA = {"person": {"fullName": "Pitcher A"}, "stats": {"pitching": {"inningsPitched": "5.0", "outs": 15, "strikeOuts": 4, "earnedRuns": 1, "hits": 3, "baseOnBalls": 1, "homeRuns": 0}}}
-    pB = {"person": {"fullName": "Pitcher B"}, "stats": {"pitching": {"inningsPitched": "2.0", "outs": 6, "strikeOuts": 1, "earnedRuns": 0, "hits": 1, "baseOnBalls": 0, "homeRuns": 0}}}
-    team_box = {"players": {"A": pA, "B": pB}}
-    name, score, line = game_digest.best_pitcher(team_box)
-    assert name in {"Pitcher A", "Pitcher B"}
-    assert "IP" in line and "ER" in line and "K" in line
-
-
-def test_linescore_defaults_and_values():
-    assert game_digest.linescore({"liveData": {"linescore": {"teams": {"away": {"runs": 3}, "home": {"runs": 2}}}}}) == (3, 2)
-    # missing teams/runs should default to 0,0
-    assert game_digest.linescore({"liveData": {"linescore": {"teams": {}}}}) == (0, 0)
-
-
-def test_choose_mvp():
-    top_hitter = ("Great Hitter", 15.0, "3-for-4, 2 HR, 5 RBI")
-    best_pitcher = ("Great Pitcher", 20.0, "9.0 IP, 10 K, 0 ER")
-    name, score, line, role = game_digest.choose_mvp(top_hitter, best_pitcher)
-    assert name == "Great Pitcher" and role == "Pitcher"
-
-
-def test_digest_one_game_prints(capsys):
-    feed = {
-        "gameData": {"teams": {"away": {"id": 119, "name": "Dodgers"}, "home": {"id": 112, "name": "Cubs"}}},
-        "liveData": {
-            "linescore": {"teams": {"away": {"runs": 5}, "home": {"runs": 3}}},
-            "boxscore": {"teams": {"away": {"players": {}}, "home": {"players": {}}}},
-        },
+def _summary_row() -> Dict[str, Any]:
+    return {
+        "game_id": GAME_ID,
+        "game_date": GAME_DATE,
+        "home_team_id": 108,
+        "home_team": "Los Angeles Angels",
+        "away_team_id": 112,
+        "away_team": "Chicago Cubs",
+        "home_runs": 1,
+        "away_runs": 12,
+        "status_abstract": "Final",
+        "status_detailed": "Final",
     }
-    game_digest.digest_one_game(feed, 119)  # Dodgers (away)
+
+def _linescore_row(extra_innings: bool = False) -> Dict[str, Any]:
+    # 9-inning example; set inning 10 to mark extras, if requested
+    ls = {
+        "game_id": GAME_ID,
+        "game_date": GAME_DATE,
+        "home_team_id": 108,
+        "away_team_id": 112,
+        "total_home": 1,
+        "total_away": 12,
+    }
+    away = [2,0,3,0,0,0,3,4,0] + [None]*6
+    home = [0,0,0,1,0,0,0,0,0] + [None]*6
+    if extra_innings:
+        away[9] = 1  # 10th inning (index 9)
+    for i in range(1, 16):
+        ls[f"away_inn_{i}"] = away[i-1]
+        ls[f"home_inn_{i}"] = home[i-1]
+    return ls
+
+def _players_rows() -> List[Dict[str, Any]]:
+    # Two batters, one pitcher — all for team 112 (away)
+    return [
+        {
+            "game_id": GAME_ID, "game_date": GAME_DATE,
+            "team_side": "away", "team_id": 112, "team_name": "Chicago Cubs",
+            "player_id": 10001, "player_name": "Away Slugger", "primary_pos": "LF",
+            "ab": 5, "r": 3, "h": 3, "doubles": 0, "triples": 0, "hr": 2, "rbi": 5,
+            "bb": 1, "so": 1, "sb": 1, "cs": 0, "sf": 0, "sh": 0,
+            "outs": 0, "ip_str": "0.0", "er": 0, "k": 0, "h_allowed": 0,
+            "bb_allowed": 0, "hr_allowed": 0, "bf": 0, "pitches": 0, "strikes": 0,
+            "hbp": 0, "wp": 0,
+        },
+        {
+            "game_id": GAME_ID, "game_date": GAME_DATE,
+            "team_side": "away", "team_id": 112, "team_name": "Chicago Cubs",
+            "player_id": 10002, "player_name": "Away TableSetter", "primary_pos": "2B",
+            "ab": 4, "r": 2, "h": 2, "doubles": 1, "triples": 0, "hr": 0, "rbi": 1,
+            "bb": 1, "so": 0, "sb": 0, "cs": 0, "sf": 0, "sh": 0,
+            "outs": 0, "ip_str": "0.0", "er": 0, "k": 0, "h_allowed": 0,
+            "bb_allowed": 0, "hr_allowed": 0, "bf": 0, "pitches": 0, "strikes": 0,
+            "hbp": 0, "wp": 0,
+        },
+        {
+            "game_id": GAME_ID, "game_date": GAME_DATE,
+            "team_side": "away", "team_id": 112, "team_name": "Chicago Cubs",
+            "player_id": 20002, "player_name": "Away Pitcher", "primary_pos": "P",
+            "ab": 0, "r": 0, "h": 0, "doubles": 0, "triples": 0, "hr": 0, "rbi": 0,
+            "bb": 0, "so": 0, "sb": 0, "cs": 0, "sf": 0, "sh": 0,
+            "outs": 21, "ip_str": "7.0", "er": 1, "k": 8, "h_allowed": 4,
+            "bb_allowed": 1, "hr_allowed": 0, "bf": 26, "pitches": 95, "strikes": 62,
+            "hbp": 0, "wp": 0,
+        },
+    ]
+
+
+# --------------------------
+# Unit tests: pure helpers
+# --------------------------
+
+def test_parse_date_or_today_with_explicit_value():
+    d = gd.parse_date_or_today("2025-08-23")
+    assert str(d) == "2025-08-23"
+
+def test_outs_to_ip_str():
+    assert gd.outs_to_ip_str(0) == "0.0"
+    assert gd.outs_to_ip_str(3) == "1.0"
+    assert gd.outs_to_ip_str(7) == "2.1"
+
+
+# --------------------------
+# JSON mode
+# --------------------------
+
+def test_load_from_json_and_make_digest(tmp_path: Path, capsys):
+    # Arrange: write three JSON files the way mlb_ingest.py outputs them
+    indir = tmp_path / "out_debug"
+    indir.mkdir(parents=True, exist_ok=True)
+    (indir / f"{GAME_ID}_summary.json").write_text(json.dumps(_summary_row(), indent=2))
+    (indir / f"{GAME_ID}_linescore.json").write_text(json.dumps(_linescore_row(), indent=2))
+    (indir / f"{GAME_ID}_players.json").write_text(json.dumps({"players": _players_rows()}, indent=2))
+
+    triples = gd.load_from_json(TEAM_ID, gd.dt.date.fromisoformat(GAME_DATE), str(indir))
+    assert len(triples) == 1
+    s, l, players = triples[0]
+
+    # Build digest
+    digest = gd.make_digest_for_game(TEAM_ID, s, l, players)
+    assert digest["game_id"] == GAME_ID
+    assert digest["team_id"] == TEAM_ID
+    assert digest["team_runs"] == 12 and digest["opponent_runs"] == 1
+    assert digest["result"] == "W"
+
+    # Team batting totals (3+2 hits, 3+2 runs, HR=2, RBI=5+1=6, BB=2, SO=1, SB=1)
+    body = digest["body_markdown"]
+    assert "R 5 • H 5 • HR 2 • RBI 6 • BB 2 • SO 1 • SB 1" in body
+    assert "Away Slugger (2)" in body  # HR list appears
+
+    # Pitching totals and star line
+    assert "Team: 7.0 IP, 8 K, 1 ER, 4 H, 1 BB" in body
+    assert "Away Pitcher: 7.0 IP, 8 K, 1 ER, 4 H, 1 BB" in body
+
+    # Drive main() in JSON mode to ensure prints work and no BQ write is attempted
+    rc = gd.main(["--team", str(TEAM_ID), "--date", GAME_DATE, "--output", "json", "--json_indir", str(indir)])
+    assert rc == 0
     out = capsys.readouterr().out
-    assert "Dodgers" in out and "Cubs" in out and ("📣" in out or "-" in out)
+    assert "Final:" in out and "Top Batters" in out and "Pitching" in out
+
+
+def test_format_linescore_str_marks_extras():
+    lrow = _linescore_row(extra_innings=True)
+    ls = gd.LinescoreRow(
+        game_id=lrow["game_id"], game_date=lrow["game_date"],
+        home_team_id=lrow["home_team_id"], away_team_id=lrow["away_team_id"],
+        totals=(lrow["total_home"], lrow["total_away"]),
+        innings_home=[lrow.get(f"home_inn_{i}") for i in range(1, 16)],
+        innings_away=[lrow.get(f"away_inn_{i}") for i in range(1, 16)],
+    )
+    s = gd.format_linescore_str(ls, team_is_home=False)
+    assert "(+)" in s
+
+
+# --------------------------
+# BQ mode (read-only)
+# --------------------------
+
+class FakeBQClient:
+    def __init__(self, project="fake"):
+        self.project = project
+
+def _fake_bq_query_factory():
+    """Return a bq_query stub that returns per-sql results."""
+    calls = {"q1": 0, "q2": 0, "q3": 0}
+
+    def _bq_query(client, sql: str, params: Dict[str, Any]):
+        # q1: summaries
+        if "game_summaries" in sql:
+            calls["q1"] += 1
+            return iter([_summary_row()])
+        # q2: linescore
+        if "game_linescore" in sql:
+            calls["q2"] += 1
+            return iter([_linescore_row()])
+        # q3: players
+        if "game_boxscore_players" in sql:
+            calls["q3"] += 1
+            return iter(_players_rows())
+        raise AssertionError(f"Unexpected SQL: {sql}")
+
+    return _bq_query, calls
+
+def test_load_from_bq_and_main_no_write(monkeypatch, capsys):
+    # Patch client + query so no real BQ is used
+    monkeypatch.setattr(gd, "make_bq_client", lambda project=None: FakeBQClient())
+    fake_query, calls = _fake_bq_query_factory()
+    monkeypatch.setattr(gd, "bq_query", fake_query)
+
+    triples = gd.load_from_bq(TEAM_ID, gd.dt.date.fromisoformat(GAME_DATE))
+    assert len(triples) == 1
+    s, l, players = triples[0]
+    assert s.game_id == GAME_ID
+    assert len(players) == 3
+
+    # Drive main() in BQ mode with --no_write (so we don't need bigquery package)
+    rc = gd.main(["--team", str(TEAM_ID), "--date", GAME_DATE, "--output", "bq", "--no_write"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Final:" in out and "Top Batters" in out and "Pitching" in out
+
+    # Ensure our fake was hit properly
+    assert calls["q1"] >= 1 and calls["q2"] >= 1 and calls["q3"] >= 1
