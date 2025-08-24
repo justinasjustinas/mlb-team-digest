@@ -6,16 +6,12 @@ This project runs privately and delivers a simple digest of the latest game for 
 
 ## Next steps
 
-- Refactor game_digest.py now that I've decided to use BigQuery.
-- Create `infra/gcp/*` or `infra/aws/*` Terraform files.
-- Create a project in CGP or AWS and authenticate Terraform with permissions on that project.
-- Figure out the container image for cloud run.
-- Test all of the above.
+- Setup a workflow to send an email with the game digest.
 - Update README with deployment steps, variable setup, etc.
+- Improve tests (datetime.datetime.utcnow() is deprecated).
 - Add core metrics, namely AVG, OBP, SLG, OPS, ERA and WHIP.
 - Add --beginner parameter to return a beginner-friendly digest.
 - Let `--team` param accept names/abbreviations (nicer CLI).
-- Figure out a more neutral approach to timezones.
 - Figure out a smart way to perform data validation tests.
 - And more...
 
