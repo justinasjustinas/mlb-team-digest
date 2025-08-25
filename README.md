@@ -36,32 +36,18 @@ BigQuery  ──▶  Digest (game_digest.py) ──▶  BigQuery: mlb.game_diges
 
 ## Example of final digest output
 
-Note that this was just to test the whole setup. Calculated metrics, such as **AVG, OBP, SLG, OPS, ERA, WHIP**, will be added soon, which means the digest itself will be changed to use those metrics instead.
-
 ```
-Chicago Cubs W 5-3 vs St. Louis Cardinals
---------------------------------------------------------------------------------
-## Final: Chicago Cubs 5-3 W St. Louis Cardinals
+## Final: Chicago Cubs 5-3 St. Louis Cardinals
 
 ### Linescore
 Away: 1 0 0 1 0 0 0 1 0
 Home: 0 0 2 0 0 1 2 0 -
 
-### Team Totals (batting)
-- R 5 • H 9 • HR 2 • RBI 5 • BB 3 • SO 7 • SB 1
-- Homers: Seiya Suzuki (1), Ian Happ (1)
+### Top Batter for Chicago Cubs
+- Seiya Suzuki: 3.20 BAT_SCORE, 1 HR, 2 RBI, .320 AVG, .380 OBP, 3.000 SLG, .900 OPS
 
-### Top Batters
-- Seiya Suzuki: 3 H, 1 HR, 2 RBI, 0 BB, 1 K (AB 4)
-- Ian Happ: 2 H, 1 HR, 3 RBI, 1 BB, 2 K (AB 4)
-
-### Pitching
-- Team: 9.0 IP, 10 K, 3 ER, 6 H, 2 BB
-- Justin Steele: 7.0 IP, 8 K, 2 ER, 5 H, 1 BB
-
-### Notables
-- Seiya Suzuki: 3H, 1HR, 2RBI
-- Justin Steele: 7.0 IP, 8 K, 2 ER
+### Top Pitcher for Chicago Cubs
+- Justin Steele: 3.00 PITCH_SCORE, 7.0 IP, 2.90 ERA, 1.00 WHIP
 ```
 
 > Note: This is a representative example. Your actual output depends on the selected team/date and the underlying data, obviously.
