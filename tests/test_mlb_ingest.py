@@ -1,19 +1,19 @@
 # tests/test_mlb_ingest.py
 import json
+import math
 import sys
-import types
-from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import pytest
 
-import mlb_ingest
+# ---- Bring the module under test into the path (adjust if needed)
+sys.path.append(".")
+import mlb_ingest as mod  # noqa: E402
 
 
-# --------------------------
-# Helpers / fixtures
-# --------------------------
-
+# ------------------------
+# Helpers / sample payloads
+# ------------------------
 def sample_feed(
     *,
     game_pk: int = 776618,
@@ -28,8 +28,8 @@ def sample_feed(
     away_name: str = "Chicago Cubs",
     home_runs: int = 1,
     away_runs: int = 12,
-    innings_home = (0, 0, 0, 1, 0, 0, 0, 0, 0),
-    innings_away = (2, 0, 3, 0, 0, 0, 3, 4, 0),
+    innings_home=(0, 0, 0, 1, 0, 0, 0, 0, 0),
+    innings_away=(2, 0, 3, 0, 0, 0, 3, 4, 0),
 ) -> Dict[str, Any]:
     innings = []
     for i in range(max(len(innings_home), len(innings_away))):
@@ -58,10 +58,7 @@ def sample_feed(
         },
         "liveData": {
             "linescore": {
-                "teams": {
-                    "home": {"runs": home_runs},
-                    "away": {"runs": away_runs},
-                },
+                "teams": {"home": {"runs": home_runs}, "away": {"runs": away_runs}},
                 "innings": innings,
             },
             "boxscore": {
@@ -82,8 +79,9 @@ def sample_feed(
                                     "pitching": {
                                         "outs": 0, "inningsPitched": "0.0",
                                         "earnedRuns": 0, "strikeOuts": 0, "hits": 0,
-                                        "baseOnBalls": 0, "homeRuns": 0, "battersFaced": 0,
-                                        "pitchesThrown": 0, "strikes": 0, "hitByPitch": 0, "wildPitches": 0,
+                                        "baseOnBalls": 0, "homeRuns": 0,
+                                        "battersFaced": 0, "pitchesThrown": 0,
+                                        "strikes": 0, "hitByPitch": 0, "wildPitches": 0,
                                     },
                                 },
                             }
@@ -106,7 +104,8 @@ def sample_feed(
                                         "outs": 21, "inningsPitched": "7.0",
                                         "earnedRuns": 1, "strikeOuts": 8, "hits": 4,
                                         "baseOnBalls": 1, "homeRuns": 0, "battersFaced": 26,
-                                        "pitchesThrown": 95, "strikes": 62, "hitByPitch": 0, "wildPitches": 0,
+                                        "pitchesThrown": 95, "strikes": 62, "hitByPitch": 0,
+                                        "wildPitches": 0,
                                     },
                                 },
                             }
@@ -118,232 +117,256 @@ def sample_feed(
     }
 
 
-# --------------------------
-# Unit tests (pure helpers)
-# --------------------------
-
-def test_decide_sink_prefers_cli_and_env(monkeypatch):
-    monkeypatch.delenv("OUTPUT_SINK", raising=False)
-    monkeypatch.delenv("K_SERVICE", raising=False)
-    assert mlb_ingest.decide_sink(None) == "json"
-
-    monkeypatch.setenv("OUTPUT_SINK", "bq")
-    assert mlb_ingest.decide_sink(None) == "bq"
-
-    assert mlb_ingest.decide_sink("json") == "json"
-
-
-def test_parse_date_or_today_with_explicit_value():
-    d = mlb_ingest.parse_date_or_today("2025-08-23")
-    assert str(d) == "2025-08-23"
-
-
-def test_summarize_game_minimal_fields():
-    feed = sample_feed()
-    row = mlb_ingest.summarize_game(feed)
-    assert row["game_id"] == 776618
-    assert row["game_date"] == "2025-08-23"
-    assert row["home_team_id"] == 108
-    assert row["away_team_id"] == 112
-    assert row["home_team"] == "Los Angeles Angels"
-    assert row["away_team"] == "Chicago Cubs"
-    assert row["home_runs"] == 1
-    assert row["away_runs"] == 12
-    assert row["status_detailed"] == "Final"
-    assert row["status_abstract"] == "Final"
-    assert row["game_time_utc"] == "2025-08-24T01:38:00Z"
-    assert row["venue_tz"] == "America/Los_Angeles"
-    assert "ingested_at_utc" in row
-
-
-def test_summarize_linescore_builds_flat_innings():
-    feed = sample_feed()
-    ls = mlb_ingest.summarize_linescore(feed)
-    assert ls["game_id"] == 776618
-    assert ls["game_date"] == "2025-08-23"
-    assert ls["home_team_id"] == 108
-    assert ls["away_team_id"] == 112
-    assert ls["total_home"] == 1
-    assert ls["total_away"] == 12
-    assert ls["home_inn_1"] == 0
-    assert ls["away_inn_1"] == 2
-    assert ls["home_inn_4"] == 1
-    assert ls["away_inn_7"] == 3
-    for i in range(1, 16):
-        assert f"home_inn_{i}" in ls and f"away_inn_{i}" in ls
-
-
-def test_iter_player_rows_minimal_projection():
-    feed = sample_feed()
-    rows = mlb_ingest.iter_player_rows(feed)
-    assert len(rows) == 2
-    away = next(r for r in rows if r["player_id"] == 2002)
-    assert away["team_side"] == "away"
-    assert away["team_id"] == 112
-    assert away["team_name"] == "Chicago Cubs"
-    assert away["primary_pos"] == "P"
-    assert away["game_date"] == "2025-08-23"
-    assert away["outs"] == 21
-    assert away["ip_str"] == "7.0"
-    assert away["er"] == 1
-    assert away["k"] == 8
-    assert away["h_allowed"] == 4
-    assert away["bb_allowed"] == 1
-    assert away["hr_allowed"] == 0
-    assert away["bf"] == 26
-    assert away["pitches"] == 95
-    assert away["strikes"] == 62
-    assert away["hbp"] == 0
-    assert away["wp"] == 0
-    for k in ("ab","r","h","doubles","triples","hr","rbi","bb","so","sb","cs","sf","sh"):
-        assert k in away
-
-
-# --------------------------
-# Main / I/O behavior
-# --------------------------
-
-def test_main_json_writes_only_for_final(monkeypatch, tmp_path):
-    # Make schedule return two games: one Final, one Live
-    schedule = {
-        "dates": [{
-            "games": [
-                {"gamePk": 111},
-                {"gamePk": 222},
-            ]
-        }]
+def make_schedule_payload_from_feed(feed: Dict[str, Any]) -> Dict[str, Any]:
+    """Transform the sample_feed into /schedule-like structure used by find_final_games_for_team."""
+    g = {
+        "gamePk": feed["gamePk"],
+        "status": {"detailedState": feed["gameData"]["status"]["detailedState"]},
+        "teams": {
+            "home": {
+                "team": {
+                    "id": feed["gameData"]["teams"]["home"]["id"],
+                    "name": feed["gameData"]["teams"]["home"]["name"],
+                },
+                "score": feed["liveData"]["linescore"]["teams"]["home"]["runs"],
+            },
+            "away": {
+                "team": {
+                    "id": feed["gameData"]["teams"]["away"]["id"],
+                    "name": feed["gameData"]["teams"]["away"]["name"],
+                },
+                "score": feed["liveData"]["linescore"]["teams"]["away"]["runs"],
+            },
+        },
     }
+    return {"dates": [{"games": [g]}]}
 
-    def fake_http(url, params=None, **_):
-        if "schedule" in url:
-            return schedule
-        if "111" in url:
-            return sample_feed(game_pk=111, detailed="Final", abstract="Final")
-        if "222" in url:
-            return sample_feed(game_pk=222, detailed="In Progress", abstract="Live")
+
+def make_linescore_from_feed(feed: Dict[str, Any]) -> Dict[str, Any]:
+    return feed["liveData"]["linescore"]
+
+
+def make_boxscore_from_feed(feed: Dict[str, Any]) -> Dict[str, Any]:
+    return feed["liveData"]["boxscore"]
+
+
+# ------------------------
+# Unit tests: pure helpers
+# ------------------------
+def test_innings_from_outs():
+    assert mod.innings_from_outs(0) == 0.0
+    assert mod.innings_from_outs(3) == 1.0
+    assert mod.innings_from_outs(4) == 1.1
+    assert mod.innings_from_outs(5) == 1.2
+    assert mod.innings_from_outs(19) == 6.1  # 6 innings + 1 out
+
+
+def test_parse_ip_to_outs():
+    assert mod.parse_ip_to_outs(None) == 0
+    assert mod.parse_ip_to_outs(2) == 6  # int means "innings", convert to outs
+    assert mod.parse_ip_to_outs("7.0") == 21
+    assert mod.parse_ip_to_outs("6.1") == 19
+    assert mod.parse_ip_to_outs("6.2") == 20
+    assert mod.parse_ip_to_outs("abc") == 0
+
+
+def test_compute_batting_metrics_simple():
+    row = {
+        "AB": 4, "H": 2, "BB": 0, "HBP": 0, "SF": 0,
+        "HR": 0, "doubles": 1, "triples": 0, "R": 1, "RBI": 1, "SB": 0,
+    }
+    out = mod.compute_batting_metrics(dict(row))
+    # AVG = 2/4 = 0.5; OBP = (2+0+0)/(4+0+0+0)=0.5; TB = 1*1 + 2*1 + 3*0 + 4*0 = 3; SLG=3/4=0.75; OPS=1.25
+    assert math.isclose(out["AVG"], 0.5)
+    assert math.isclose(out["OBP"], 0.5)
+    assert math.isclose(out["SLG"], 0.75)
+    assert math.isclose(out["OPS"], 1.25)
+    # BAT_SCORE = 5*HR + 3*(D2+D3) + 2*(BB+HBP+SB) + singles + 1.5*RBI + R
+    # singles = H - D2 - D3 - HR = 1
+    # = 0 + 3*(1) + 0 + 1 + 1.5*1 + 1 = 3 + 1 + 1.5 + 1 = 6.5
+    assert math.isclose(out["BAT_SCORE"], 6.5)
+
+
+def test_compute_pitching_metrics_simple():
+    row = {"IP": "7.0", "ER": 1, "H": 4, "BB": 1, "HR": 0, "SO": 8}
+    out = mod.compute_pitching_metrics(dict(row))
+    # IP = 7.0 -> outs=21, ip=7.0; ERA = 1*9/7 ≈ 1.2857; WHIP = (4+1)/7 ≈ 0.7143
+    assert out["outs"] == 21
+    assert math.isclose(out["IP"], 7.0)
+    assert math.isclose(out["ERA"], 9.0 / 7.0, rel_tol=1e-6)
+    assert math.isclose(out["WHIP"], 5.0 / 7.0, rel_tol=1e-6)
+    # PITCH_SCORE = 6*ip + 3*SO - 4*ER - 2*(H+BB) - 3*HR = 42 + 24 - 4 - 10 - 0 = 52
+    assert math.isclose(out["PITCH_SCORE"], 52.0)
+
+
+# ------------------------
+# Flattening tests
+# ------------------------
+def test_flatten_linescore_from_feed():
+    feed = sample_feed()
+    ls = make_linescore_from_feed(feed)
+    rows = mod.flatten_linescore(feed["gamePk"], ls)
+    # Two rows per inning; we provided 9 innings -> 18 rows
+    assert len(rows) == 18
+    # Check first inning away/home values
+    assert rows[0] == {"game_id": feed["gamePk"], "is_home": False, "inning_num": 1, "runs": 2}
+    assert rows[1] == {"game_id": feed["gamePk"], "is_home": True,  "inning_num": 1, "runs": 0}
+
+
+def test_flatten_game_summary_from_schedule_like():
+    feed = sample_feed()
+    sched = make_schedule_payload_from_feed(feed)
+    g = sched["dates"][0]["games"][0]
+    summary = mod.flatten_game_summary(g, feed["gameData"]["datetime"]["originalDate"])
+    assert summary["game_id"] == feed["gamePk"]
+    assert summary["home_team_id"] == feed["gameData"]["teams"]["home"]["id"]
+    assert summary["away_team_id"] == feed["gameData"]["teams"]["away"]["id"]
+    assert summary["home_score"] == feed["liveData"]["linescore"]["teams"]["home"]["runs"]
+    assert summary["away_score"] == feed["liveData"]["linescore"]["teams"]["away"]["runs"]
+    assert summary["status"] == "Final"
+
+
+def test_flatten_boxscore_creates_batter_and_pitcher_rows():
+    feed = sample_feed()
+    box = make_boxscore_from_feed(feed)
+    rows = mod.flatten_boxscore(feed["gamePk"], box)
+    # One batter (home), one pitcher (away)
+    roles = sorted([r["role"] for r in rows])
+    assert roles == ["batter", "pitcher"]
+    # Derived metrics exist
+    batter = [r for r in rows if r["role"] == "batter"][0]
+    pitcher = [r for r in rows if r["role"] == "pitcher"][0]
+    assert "BAT_SCORE" in batter
+    assert "PITCH_SCORE" in pitcher
+
+
+# ------------------------
+# I/O path: local JSON
+# ------------------------
+def test_write_json_triplet_and_main_json_flow(monkeypatch, tmp_path, capsys):
+    feed = sample_feed()
+    schedule_payload = make_schedule_payload_from_feed(feed)
+    linescore_payload = make_linescore_from_feed(feed)
+    boxscore_payload = make_boxscore_from_feed(feed)
+
+    # Stub network fetches
+    def fake_http_get_json(url, params=None, timeout=25):
+        if url.endswith("/schedule"):
+            return schedule_payload
+        if "/linescore" in url:
+            return linescore_payload
+        if "/boxscore" in url:
+            return boxscore_payload
         raise AssertionError(f"Unexpected URL: {url}")
 
-    monkeypatch.setenv("OUTPUT_SINK", "json")
-    monkeypatch.delenv("K_SERVICE", raising=False)
-    monkeypatch.setattr(mlb_ingest, "http_get_json", fake_http)
+    monkeypatch.setattr(mod, "http_get_json", fake_http_get_json)
 
-    outdir = tmp_path / "out"
-    args = ["--team", "112", "--date", "2025-08-23", "--json_outdir", str(outdir)]
-    rc = mlb_ingest.main(args)
+    # Force JSON output directory
+    monkeypatch.setenv("DIGEST_JSON_DIR", str(tmp_path))
+    # The module captured JSON_DIR at import-time; override it on the module.
+    mod.JSON_DIR = str(tmp_path)
+
+    # Run CLI main with json mode
+    argv = ["prog", "--team", "112", "--date", "2025-08-23", "--output", "json"]
+    monkeypatch.setattr(sys, "argv", argv)
+    rc = mod.main()
     assert rc == 0
 
-    want = {
-        outdir / "111_summary.json",
-        outdir / "111_linescore.json",
-        outdir / "111_players.json",
-    }
-    got = set(outdir.glob("*.json"))
-    assert want.issubset(got)
-    assert not any(p.name.startswith("222_") for p in got)
+    # Files are written
+    base = tmp_path / str(feed["gamePk"])
+    assert (base.with_name(f"{feed['gamePk']}_summary.json")).exists()
+    assert (base.with_name(f"{feed['gamePk']}_linescore.json")).exists()
+    assert (base.with_name(f"{feed['gamePk']}_players.json")).exists()
 
-    summary = json.loads((outdir / "111_summary.json").read_text())
-    assert summary["status_abstract"] == "Final"
+    # Index print
+    out = capsys.readouterr().out
 
+    def _extract_last_json_object_from_stdout(stdout: str) -> dict:
+        start = stdout.rfind("{")
+        end = stdout.rfind("}")
+        assert start != -1 and end != -1 and end >= start
+        return json.loads(stdout[start:end+1])
 
-def test_write_json_writes_file(monkeypatch, tmp_path: Path):
-    # write_json does not create parent dirs by itself; main() does that.
-    # So the test should prepare the parent directory.
-    obj = {"hello": "world"}
-    out = tmp_path / "subdir" / "example.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    mlb_ingest.write_json(obj, str(out))
-    assert out.exists()
-    assert json.loads(out.read_text()) == obj
+    payload = _extract_last_json_object_from_stdout(out)
+    assert payload["written"] == 1
 
+# ------------------------
+# I/O path: BigQuery (mocked)
+# ------------------------
+def test_main_bq_flow(monkeypatch):
+    feed = sample_feed()
+    schedule_payload = make_schedule_payload_from_feed(feed)
+    linescore_payload = make_linescore_from_feed(feed)
+    boxscore_payload = make_boxscore_from_feed(feed)
 
-# --------------------------
-# BigQuery stubs (module + client)
-# --------------------------
+    def fake_http_get_json(url, params=None, timeout=25):
+        if url.endswith("/schedule"):
+            return schedule_payload
+        if "/linescore" in url:
+            return linescore_payload
+        if "/boxscore" in url:
+            return boxscore_payload
+        raise AssertionError(f"Unexpected URL: {url}")
 
-# Minimal fake bigquery module so write_bq_all can import schema classes
-class _BQ_SchemaField:
-    def __init__(self, name, field_type): self.name, self.field_type = name, field_type
+    monkeypatch.setattr(mod, "http_get_json", fake_http_get_json)
 
-class _BQ_Table:
-    def __init__(self, table_id, schema=None): self.table_id, self.schema = table_id, schema
+    # Fake BQ client + capture writes
+    class FakeBQClient:
+        project = "proj"
 
-class _BQ_Dataset:
-    def __init__(self, ds_id): self.dataset_id = ds_id
+    writes: List[tuple[str, List[Dict[str, Any]]]] = []
 
-class _BQ_LoadJobConfig:
-    def __init__(self, write_disposition=None): self.write_disposition = write_disposition
+    def fake_bq_client_or_none(project):
+        return FakeBQClient()
 
-class _BQ_QueryJobConfig:
-    def __init__(self, query_parameters=None): self.query_parameters = query_parameters or []
+    def fake_bq_ensure_dataset(client, dataset_id, location):
+        # no-op
+        return None
 
-class _BQ_ArrayQueryParameter:
-    def __init__(self, name, typ, values): self.name, self.typ, self.values = name, typ, values
+    def fake_bq_write_rows(client, table_fqn, rows):
+        writes.append((table_fqn, rows))
 
-class _BQ_FakeLoadJob:
-    def result(self): return None
+    monkeypatch.setattr(mod, "bq_client_or_none", fake_bq_client_or_none)
+    monkeypatch.setattr(mod, "bq_ensure_dataset", fake_bq_ensure_dataset)
+    monkeypatch.setattr(mod, "bq_write_rows", fake_bq_write_rows)
 
-class FakeClient:
-    def __init__(self):
-        self.project = "fake"
-        self.created_tables = []
-        self.loaded = []
-        self.queries = []
+    argv = [
+        "prog",
+        "--team", "112",
+        "--date", "2025-08-23",
+        "--output", "bq",
+        "--bq_project", "myproj",
+        "--bq_dataset", "mlb",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    rc = mod.main()
+    assert rc == 0
 
-    def get_dataset(self, dataset_id): raise Exception("not found")
-    def create_dataset(self, ds, exists_ok=False): return ds
+    # Three tables should be written: summaries, linescore, players
+    assert len(writes) == 3
+    tables = [t for t, _ in writes]
+    assert f"myproj.mlb.game_summaries" in tables
+    assert f"myproj.mlb.game_linescore" in tables
+    assert f"myproj.mlb.game_boxscore_players" in tables
 
-    def get_table(self, table): raise Exception("not found")
-    def create_table(self, table):
-        self.created_tables.append(table.table_id)
-        return table
-
-    def load_table_from_json(self, rows, destination, job_config=None):
-        self.loaded.append((destination, list(rows)))
-        return _BQ_FakeLoadJob()
-
-    # used by bq_delete_by_game_ids()
-    def query(self, q, job_config=None):
-        self.queries.append((q, job_config))
-        return _BQ_FakeLoadJob()
-
-
-def _install_fake_bigquery(monkeypatch):
-    google = types.ModuleType("google")
-    cloud = types.ModuleType("google.cloud")
-    bq = types.ModuleType("google.cloud.bigquery")
-    bq.SchemaField = _BQ_SchemaField
-    bq.Table = _BQ_Table
-    bq.Dataset = _BQ_Dataset
-    bq.LoadJobConfig = _BQ_LoadJobConfig
-    bq.QueryJobConfig = _BQ_QueryJobConfig
-    bq.ArrayQueryParameter = _BQ_ArrayQueryParameter
-
-    google.cloud = cloud
-    cloud.bigquery = bq
-
-    monkeypatch.setitem(sys.modules, "google", google)
-    monkeypatch.setitem(sys.modules, "google.cloud", cloud)
-    monkeypatch.setitem(sys.modules, "google.cloud.bigquery", bq)
+    # Basic sanity on row counts
+    tbl_to_rows = {t: r for t, r in writes}
+    assert len(tbl_to_rows["myproj.mlb.game_summaries"]) == 1
+    assert len(tbl_to_rows["myproj.mlb.game_linescore"]) == 18  # 9 innings * (home+away)
+    assert len(tbl_to_rows["myproj.mlb.game_boxscore_players"]) == 2  # 1 batter + 1 pitcher
 
 
-def test_write_bq_all_uses_client_and_appends(monkeypatch):
-    # Install fake bigquery module & patch client factory
-    _install_fake_bigquery(monkeypatch)
-    fake = FakeClient()
-    monkeypatch.setattr(mlb_ingest, "bq_client", lambda project=None: fake)
+# ------------------------
+# Env / defaults
+# ------------------------
+def test_is_cloud_env_and_default_output_mode(monkeypatch):
+    # Clear
+    for k in ["K_SERVICE", "CLOUD_RUN_JOB", "GAE_ENV", "GOOGLE_CLOUD_PROJECT", "BQ_PROJECT"]:
+        monkeypatch.delenv(k, raising=False)
+    assert mod.is_cloud_env() is False
+    assert mod.default_output_mode() == "json"
 
-    summaries = [mlb_ingest.summarize_game(sample_feed(game_pk=999))]
-    linescore = [mlb_ingest.summarize_linescore(sample_feed(game_pk=999))]
-    players = mlb_ingest.iter_player_rows(sample_feed(game_pk=999))
-
-    mlb_ingest.write_bq_all(summaries, linescore, players, project="fake", dataset_location="EU")
-
-    # Three loads happened
-    assert len(fake.loaded) == 3
-    dests = [d for (d, _) in fake.loaded]
-    assert any("game_summaries" in d for d in dests)
-    assert any("game_linescore" in d for d in dests)
-    assert any("game_boxscore_players" in d for d in dests)
-
-    # Delete-by-game_id query was issued for upsert behavior
-    assert any("DELETE FROM" in q for (q, _) in fake.queries)
+    # Any of these set => cloud
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "x")
+    assert mod.is_cloud_env() is True
+    assert mod.default_output_mode() == "bq"
