@@ -15,7 +15,7 @@
 
 ## 1) `gameData` — identities, context, status
 
-**Paths you’ll use**
+**Paths to use**
 
 - `gameData.status.detailedState` _(str)_ — `"Final"`, `"In Progress"`, `"Scheduled"`.
 - `gameData.status.abstractGameState` _(str)_ — `"Final"`, `"Live"`, `"Preview"`.
@@ -97,7 +97,7 @@ for p in team_box["players"].values():
 
 ---
 
-## 6) Minimal JSON path cheatsheet (copy/paste)
+## 6) Minimal JSON path cheatsheet
 
 ```text
 # Teams & status
