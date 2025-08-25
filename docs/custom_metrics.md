@@ -5,7 +5,7 @@ These are not official MLB statistics — they’re heuristic formulas designed 
 
 ---
 
-## Hitter Score
+## Batter Score (BAT_SCORE)
 
 ```python
 score = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
@@ -31,7 +31,7 @@ score = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
 
 ---
 
-## Pitcher Score
+## Pitcher Score (PITCH_SCORE)
 
 ```python
 score = 6*IP + 3*SO - 4*ER - 2*(H + BB) - 3*HR
@@ -50,16 +50,6 @@ score = 6*IP + 3*SO - 4*ER - 2*(H + BB) - 3*HR
 - Going deep into a game (IP) adds strong value.
 - Strikeouts prevent bad luck from balls in play.
 - ER, hits, walks, and HRs penalize mistakes.
-
----
-
-## MVP Choice
-
-For each game:
-
-1. Compute top hitter score.
-2. Compute best pitcher score.
-3. Compare — whichever is higher is named **MVP of the team**.
 
 ---
 
