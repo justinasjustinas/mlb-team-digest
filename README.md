@@ -36,6 +36,8 @@ BigQuery  ──▶  Digest (game_digest.py) ──▶  BigQuery: mlb.game_diges
 
 ## Example of final digest output
 
+Note that this was just to test the whole setup. Calculated metrics, such as **AVG, OBP, SLG, OPS, ERA, WHIP**, will be added soon, which means the digest itself will change as well.
+
 ```
 Chicago Cubs W 5-3 vs St. Louis Cardinals
 --------------------------------------------------------------------------------
