@@ -1,9 +1,9 @@
-name: Build & Push Docker image
+name: Build, Push, and Rollout (Cloud Run Jobs)
 
 on:
   push:
-    branches: ["main"] # after PRs are merged to main
-    tags: ["v*"] # release tags like v1.2.3
+    branches: ["main"] # after PRs merge to main
+    tags: ["v*"] # semantic version tags like v1.2.3
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Auth to GCP via OIDC — all values come from repo Variables
+      # ---- Auth to GCP via OIDC (no JSON key) ----
       - name: Google Auth (OIDC)
         uses: google-github-actions/auth@v2
         with:
@@ -40,15 +40,15 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker to use Artifact Registry
+      - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Generate tags & labels from Git context
-      # - merge to main  -> :edge and :<shortSHA>
-      # - tag vX.Y.Z     -> :X.Y.Z (v stripped) and :latest
+      # Generate the tag set and labels:
+      # - main: edge + short SHA
+      # - tag:  semver (v stripped) + latest
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -67,7 +67,6 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.run_id }}
 
-      # Build & push with local cache
       - name: Restore build cache
         uses: actions/cache@v4
         with:
@@ -95,5 +94,46 @@ jobs:
       - name: Show pushed tags
         run: |
           echo "Image base: $IMAGE"
-          echo "Tags:"
           echo "${{ steps.meta.outputs.tags }}" | tr ' ' '\n'
+
+  rollout:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Google Auth (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Rollout the new image to Cloud Run Jobs:
+      # - On main: use :edge
+      # - On tag:  use the semver version
+      - name: Roll out to Cloud Run Jobs (main → :edge)
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_TAGGED="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:edge"
+          echo "Rolling out $IMAGE_TAGGED to mlb-ingest and mlb-digest…"
+          gcloud run jobs update mlb-ingest --image "$IMAGE_TAGGED" --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}"
+          gcloud run jobs update mlb-digest --image "$IMAGE_TAGGED" --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}"
+          echo "Done."
+
+      - name: Roll out to Cloud Run Jobs (tag → :X.Y.Z)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          IMAGE_TAGGED="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${VERSION}"
+          echo "Rolling out $IMAGE_TAGGED to mlb-ingest and mlb-digest…"
+          gcloud run jobs update mlb-ingest --image "$IMAGE_TAGGED" --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}"
+          gcloud run jobs update mlb-digest --image "$IMAGE_TAGGED" --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}"
+          echo "Done."
