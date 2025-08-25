@@ -36,7 +36,7 @@ BigQuery  ──▶  Digest (game_digest.py) ──▶  BigQuery: mlb.game_diges
 
 ## Example of final digest output
 
-Note that this was just to test the whole setup. Calculated metrics, such as **AVG, OBP, SLG, OPS, ERA, WHIP**, will be added soon, which means the digest itself will change as well.
+Note that this was just to test the whole setup. Calculated metrics, such as **AVG, OBP, SLG, OPS, ERA, WHIP**, will be added soon, which means the digest itself will be changed to use those metrics instead.
 
 ```
 Chicago Cubs W 5-3 vs St. Louis Cardinals
@@ -183,6 +183,60 @@ This creates the Artifact Registry, BQ dataset, service accounts/IAM, Cloud Run 
 
 ---
 
+## CI/CD Overview
+
+### What happens when a PR is **merged** to `main`
+
+1. The workflow authenticates to Google Cloud via **Workload Identity Federation** (OIDC).
+2. **Builds** the Docker image.
+3. **Pushes** the image to Artifact Registry as:
+   - `europe-west4-docker.pkg.dev/mlb-team-digest/mlb-team-digest/mlb-team-digest:edge`
+   - `...:<short_sha>` (for traceability)
+4. **Rolls out** the `:edge` image to Cloud Run jobs:
+   - `mlb-ingest`
+   - `mlb-digest`
+
+### What happens when you use a tag
+
+1. The workflow triggers on that tag (same auth process as above).
+2. **Builds** the Docker image.
+3. **Pushes** it to Artifact Registry as:
+   - `:1.2.3` (the semver version, with the `v` stripped)
+   - `:latest` (for convenience)
+4. **Rolls out** the `:1.2.3` image to Cloud Run jobs:
+   - `mlb-ingest`
+   - `mlb-digest`
+
+---
+
+This keeps day-to-day deploys simple (**merge → build → rollout**) while allowing you to pin stable releases to semantic versions (**tag → release → rollout**).
+
+### IAM / Auth you should have (one-time)
+
+- A **workload identity pool + provider** allowing GitHub OIDC (`token.actions.githubusercontent.com`).
+- A **service account** (e.g. `github-actions@mlb-team-digest.iam.gserviceaccount.com`) with:
+  - `roles/artifactregistry.writer` (push images)
+  - `roles/run.admin` + `roles/iam.serviceAccountUser` (to roll out)
+- An **impersonation** step in the workflow using that SA.
+- Jobs/services should run as a runtime SA that has least-privilege to the resources they need.
+
+---
+
+## Versioning & Tags — **don’t forget these**
+
+Use **SemVer**: `vMAJOR.MINOR.PATCH` → examples: `v1.0.0`, `v1.2.3`.
+
+### Create a tag
+
+```bash
+# from a clean main (or release) branch
+git pull
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+---
+
 ## Running things
 
 ### First local run (JSON‑only, no GCP needed)
@@ -228,7 +282,7 @@ gcloud run jobs execute mlb-digest --region europe-west4 --args="--team,112,--da
 ### Automated daily flow
 
 - At 08:00 **America/New_York**, Cloud Scheduler triggers the Workflow for each `team_id`.
-- The Workflow sleeps until each scheduled game’s start, then +90m, polls until **FINAL**, runs **ingest** and then **digest** once per game. fileciteturn1file0
+- The Workflow sleeps until each scheduled game’s start, then +90m, polls until **FINAL**, runs **ingest** and then **digest** once per game.
 
 ---
 
