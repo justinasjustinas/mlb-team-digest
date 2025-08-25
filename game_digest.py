@@ -100,8 +100,16 @@ def build_from_json(team: str, date_iso: str) -> Tuple[str, Optional[int], Optio
     home_line = [str(r["runs"]) for r in lines if (int(r.get("game_id", game_id))==game_id and r.get("is_home"))]
 
     team_is_home = (str(summary.get("home_team_id")) == str(team)) or (str(summary.get("home_team_name","")).lower() == str(team).lower()) or (str(summary.get("home_team","")).lower() == str(team).lower())
-    team_name = summary.get("home_team_name") or summary.get("home_team") if team_is_home else summary.get("away_team_name") or summary.get("away_team")
-    opp_name  = summary.get("away_team_name") or summary.get("away_team") if team_is_home else summary.get("home_team_name") or summary.get("home_team")
+    team_name = (
+    (summary.get("home_team_name") or summary.get("home_team"))
+    if team_is_home else
+    (summary.get("away_team_name") or summary.get("away_team"))
+)
+    opp_name = (
+    (summary.get("away_team_name") or summary.get("away_team"))
+    if team_is_home else
+    (summary.get("home_team_name") or summary.get("home_team"))
+)
     our_score = int(summary["home_score"] if team_is_home else summary["away_score"])
     opp_score = int(summary["away_score"] if team_is_home else summary["home_score"])
 
@@ -178,13 +186,13 @@ def bq_write_digest(client, project: str, dataset: str, row: Dict[str, Any]) -> 
 def pick_top_batter(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     rows = [r for r in rows if r.get("BAT_SCORE") is not None]
     if not rows: return None
-    rows.sort(key=lambda r: (float(r["BAT_SCORE"]), int(r.get("HR",0)), int(r.get("RBI",0)), int(r.get("H",0))), reverse=True)
+    rows.sort(key=lambda r: float(r["BAT_SCORE"]), reverse=True)
     return rows[0]
 
 def pick_top_pitcher(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     rows = [r for r in rows if r.get("PITCH_SCORE") is not None]
     if not rows: return None
-    rows.sort(key=lambda r: (float(r["PITCH_SCORE"]), int(r.get("IP_outs", r.get("outs",0))), -float(r.get("ERA", 999)), -float(r.get("WHIP", 999))), reverse=True)
+    rows.sort(key=lambda r: float(r["PITCH_SCORE"]), reverse=True)
     return rows[0]
 
 def build_from_bq(client, project: str, dataset: str, team: str, date_iso: str) -> Tuple[str, Optional[int], Optional[int]]:
