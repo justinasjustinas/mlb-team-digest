@@ -1,203 +1,273 @@
 # tests/test_game_digest.py
 import json
+import os
+import re
 import sys
+import datetime as dt
 from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
 
-import game_digest as gd
+# Make repo root importable
+sys.path.append(".")
+import game_digest as mod  # <-- rename if your module name differs
 
 
-# --------------------------
-# Test data helpers
-# --------------------------
+# ------------------------
+# Helpers
+# ------------------------
+def _mk_linescore(game_id: int, innings_away: List[int], innings_home: List[int]):
+    rows = []
+    for i, runs in enumerate(innings_away, start=1):
+        rows.append({"game_id": game_id, "is_home": False, "inning_num": i, "runs": runs})
+    for i, runs in enumerate(innings_home, start=1):
+        rows.append({"game_id": game_id, "is_home": True, "inning_num": i, "runs": runs})
+    return rows
 
-TEAM_ID = 112  # Cubs (away in our fixture)
-GAME_DATE = "2025-08-23"
-GAME_ID = 111
 
-def _summary_row() -> Dict[str, Any]:
-    return {
-        "game_id": GAME_ID,
-        "game_date": GAME_DATE,
-        "home_team_id": 108,
-        "home_team": "Los Angeles Angels",
-        "away_team_id": 112,
-        "away_team": "Chicago Cubs",
-        "home_runs": 1,
-        "away_runs": 12,
-        "status_abstract": "Final",
-        "status_detailed": "Final",
+def _mk_players(game_id: int, team_id: int, team_name: str):
+    # one batter + one pitcher — already “derived” as if coming from mlb_ingest
+    batter = {
+        "role": "batter",
+        "game_id": game_id,
+        "team_id": team_id,
+        "team_name": team_name,
+        "AB": 4, "H": 2, "HR": 1, "RBI": 3,
+        "AVG": 0.500, "OBP": 0.600, "SLG": 1.250, "OPS": 1.850,
+        "BAT_SCORE": 12.5,
+        "name": "Star Batter",
     }
-
-def _linescore_row(extra_innings: bool = False) -> Dict[str, Any]:
-    # 9-inning example; set inning 10 to mark extras, if requested
-    ls = {
-        "game_id": GAME_ID,
-        "game_date": GAME_DATE,
-        "home_team_id": 108,
-        "away_team_id": 112,
-        "total_home": 1,
-        "total_away": 12,
+    pitcher = {
+        "role": "pitcher",
+        "game_id": game_id,
+        "team_id": team_id,
+        "team_name": team_name,
+        "outs": 18, "IP": 6.0, "ERA": 1.50, "WHIP": 0.83, "SO": 7, "HR": 0,
+        "PITCH_SCORE": 38.0,
+        "name": "Ace Pitcher",
     }
-    away = [2,0,3,0,0,0,3,4,0] + [None]*6
-    home = [0,0,0,1,0,0,0,0,0] + [None]*6
-    if extra_innings:
-        away[9] = 1  # 10th inning (index 9)
-    for i in range(1, 16):
-        ls[f"away_inn_{i}"] = away[i-1]
-        ls[f"home_inn_{i}"] = home[i-1]
-    return ls
+    return [batter, pitcher]
 
-def _players_rows() -> List[Dict[str, Any]]:
-    # Two batters, one pitcher — all for team 112 (away)
-    return [
-        {
-            "game_id": GAME_ID, "game_date": GAME_DATE,
-            "team_side": "away", "team_id": 112, "team_name": "Chicago Cubs",
-            "player_id": 10001, "player_name": "Away Slugger", "primary_pos": "LF",
-            "ab": 5, "r": 3, "h": 3, "doubles": 0, "triples": 0, "hr": 2, "rbi": 5,
-            "bb": 1, "so": 1, "sb": 1, "cs": 0, "sf": 0, "sh": 0,
-            "outs": 0, "ip_str": "0.0", "er": 0, "k": 0, "h_allowed": 0,
-            "bb_allowed": 0, "hr_allowed": 0, "bf": 0, "pitches": 0, "strikes": 0,
-            "hbp": 0, "wp": 0,
-        },
-        {
-            "game_id": GAME_ID, "game_date": GAME_DATE,
-            "team_side": "away", "team_id": 112, "team_name": "Chicago Cubs",
-            "player_id": 10002, "player_name": "Away TableSetter", "primary_pos": "2B",
-            "ab": 4, "r": 2, "h": 2, "doubles": 1, "triples": 0, "hr": 0, "rbi": 1,
-            "bb": 1, "so": 0, "sb": 0, "cs": 0, "sf": 0, "sh": 0,
-            "outs": 0, "ip_str": "0.0", "er": 0, "k": 0, "h_allowed": 0,
-            "bb_allowed": 0, "hr_allowed": 0, "bf": 0, "pitches": 0, "strikes": 0,
-            "hbp": 0, "wp": 0,
-        },
-        {
-            "game_id": GAME_ID, "game_date": GAME_DATE,
-            "team_side": "away", "team_id": 112, "team_name": "Chicago Cubs",
-            "player_id": 20002, "player_name": "Away Pitcher", "primary_pos": "P",
-            "ab": 0, "r": 0, "h": 0, "doubles": 0, "triples": 0, "hr": 0, "rbi": 0,
-            "bb": 0, "so": 0, "sb": 0, "cs": 0, "sf": 0, "sh": 0,
-            "outs": 21, "ip_str": "7.0", "er": 1, "k": 8, "h_allowed": 4,
-            "bb_allowed": 1, "hr_allowed": 0, "bf": 26, "pitches": 95, "strikes": 62,
-            "hbp": 0, "wp": 0,
-        },
+
+# ------------------------
+# Unit tests: helpers
+# ------------------------
+def test_fmt_rate():
+    assert mod.fmt_rate(0.375) == ".375"
+    assert mod.fmt_rate(0.3751, 3) == ".375"
+    assert mod.fmt_rate(1.2345, 2) == "1.23"
+    assert mod.fmt_rate(0.75, leading_zero=True) == "0.750"
+
+
+def test_parse_date_prefers_arg_and_falls_back_to_today():
+    assert mod.parse_date("2025-08-23") == "2025-08-23"
+    # None -> today in BASEBALL_TZ; we just assert format
+    d = mod.parse_date(None)
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", d)
+
+
+def test_is_our_row_helpers():
+    s = {
+        "home_team_id": 1, "home_team_name": "Home",
+        "away_team_id": 2, "away_team_name": "Away",
+    }
+    assert mod.is_our_game_row(s, "1")
+    assert mod.is_our_game_row(s, "Away")
+    assert not mod.is_our_game_row(s, "Nope")
+
+    r = {"team_id": 2, "team_name": "Away"}
+    assert mod.is_our_team_row(r, "2")
+    assert mod.is_our_team_row(r, "away")
+    assert not mod.is_our_team_row(r, "other")
+
+
+def test_pick_top_batter_and_pitcher():
+    batters = [
+        {"BAT_SCORE": 5, "HR": 0, "RBI": 1, "H": 1, "name": "B1"},
+        {"BAT_SCORE": 7, "HR": 1, "RBI": 1, "H": 2, "name": "B2"},  # best
     ]
+    pitchers = [
+        {"PITCH_SCORE": 30, "outs": 9, "ERA": 2.0, "WHIP": 1.1, "name": "P1"},
+        {"PITCH_SCORE": 35, "outs": 12, "ERA": 1.5, "WHIP": 1.0, "name": "P2"},  # best
+    ]
+    assert mod.pick_top_batter(batters)["name"] == "B2"
+    assert mod.pick_top_pitcher(pitchers)["name"] == "P2"
 
 
-# --------------------------
-# Unit tests: pure helpers
-# --------------------------
+# ------------------------
+# JSON path
+# ------------------------
+def test_build_from_json_happy_path(monkeypatch, tmp_path: Path, capsys):
+    # Arrange files
+    game_id = 123456
+    date_iso = "2025-08-23"
+    home_id, away_id = 10, 112
+    home_name, away_name = "Los Angeles Angels", "Chicago Cubs"
+    status = "Final"
 
-def test_parse_date_or_today_with_explicit_value():
-    d = gd.parse_date_or_today("2025-08-23")
-    assert str(d) == "2025-08-23"
+    summary = {
+        "game_id": game_id,
+        "game_date": date_iso,
+        "home_team_id": home_id, "home_team_name": home_name,
+        "away_team_id": away_id, "away_team_name": away_name,
+        "home_score": 1, "away_score": 5,
+        "status": status,
+    }
+    lines = _mk_linescore(game_id, innings_away=[2,0,3,0,0,0,0,0,0], innings_home=[0,0,0,1,0,0,0,0,0])
+    players = _mk_players(game_id, team_id=away_id, team_name=away_name)
 
-def test_outs_to_ip_str():
-    assert gd.outs_to_ip_str(0) == "0.0"
-    assert gd.outs_to_ip_str(3) == "1.0"
-    assert gd.outs_to_ip_str(7) == "2.1"
+    # Write triplet
+    (tmp_path / f"{game_id}_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (tmp_path / f"{game_id}_linescore.json").write_text(json.dumps(lines), encoding="utf-8")
+    (tmp_path / f"{game_id}_players.json").write_text(json.dumps(players), encoding="utf-8")
+
+    # Point module to tmp dir
+    monkeypatch.setenv("DIGEST_JSON_DIR", str(tmp_path))
+    mod.JSON_DIR = str(tmp_path)
+
+    # Act
+    body, out_game_id, out_team_id = mod.build_from_json(team=away_name, date_iso=date_iso)
+
+    # Assert
+    assert out_game_id == game_id
+    assert out_team_id == away_id
+    assert body.startswith(f"## Final: {away_name} 5-1 {home_name}")
+    assert "### Linescore" in body
+    assert "Away: 2 0 3 0 0 0 0 0 0" in body
+    assert "Home: 0 0 0 1 0 0 0 0 0" in body
+    assert "### Top Batter for Chicago Cubs" in body
+    assert "### Top Pitcher for Chicago Cubs" in body
 
 
-# --------------------------
-# JSON mode
-# --------------------------
+def test_find_summary_for_errors(monkeypatch, tmp_path: Path):
+    # No directory
+    monkeypatch.setenv("DIGEST_JSON_DIR", str(tmp_path / "missing"))
+    mod.JSON_DIR = str(tmp_path / "missing")
+    with pytest.raises(FileNotFoundError):
+        mod.find_summary_for("Team", "2025-08-23")
 
-def test_load_from_json_and_make_digest(tmp_path: Path, capsys):
-    # Arrange: write three JSON files the way mlb_ingest.py outputs them
-    indir = tmp_path / "out_debug"
-    indir.mkdir(parents=True, exist_ok=True)
-    (indir / f"{GAME_ID}_summary.json").write_text(json.dumps(_summary_row(), indent=2))
-    (indir / f"{GAME_ID}_linescore.json").write_text(json.dumps(_linescore_row(), indent=2))
-    (indir / f"{GAME_ID}_players.json").write_text(json.dumps({"players": _players_rows()}, indent=2))
+    # Directory exists but no summaries
+    (tmp_path / "data").mkdir()
+    monkeypatch.setenv("DIGEST_JSON_DIR", str(tmp_path / "data"))
+    mod.JSON_DIR = str(tmp_path / "data")
+    with pytest.raises(FileNotFoundError):
+        mod.find_summary_for("Team", "2025-08-23")
 
-    triples = gd.load_from_json(TEAM_ID, gd.dt.date.fromisoformat(GAME_DATE), str(indir))
-    assert len(triples) == 1
-    s, l, players = triples[0]
 
-    # Build digest
-    digest = gd.make_digest_for_game(TEAM_ID, s, l, players)
-    assert digest["game_id"] == GAME_ID
-    assert digest["team_id"] == TEAM_ID
-    assert digest["team_runs"] == 12 and digest["opponent_runs"] == 1
-    assert digest["result"] == "W"
+def test_main_json_flow(monkeypatch, tmp_path: Path, capsys):
+    # Prepare same as happy path
+    game_id = 777000
+    date_iso = "2025-08-23"
+    home_id, away_id = 108, 112
+    home_name, away_name = "Los Angeles Angels", "Chicago Cubs"
 
-    # Team batting totals (3+2 hits, 3+2 runs, HR=2, RBI=5+1=6, BB=2, SO=1, SB=1)
-    body = digest["body_markdown"]
-    assert "R 5 • H 5 • HR 2 • RBI 6 • BB 2 • SO 1 • SB 1" in body
-    assert "Away Slugger (2)" in body  # HR list appears
+    summary = {
+        "game_id": game_id,
+        "game_date": date_iso,
+        "home_team_id": home_id, "home_team_name": home_name,
+        "away_team_id": away_id, "away_team_name": away_name,
+        "home_score": 1, "away_score": 12,
+        "status": "Final",
+    }
+    lines = _mk_linescore(game_id, innings_away=[2,0,3,0,0,0,3,4,0], innings_home=[0,0,0,1,0,0,0,0,0])
+    players = _mk_players(game_id, team_id=away_id, team_name=away_name)
 
-    # Pitching totals and star line
-    assert "Team: 7.0 IP, 8 K, 1 ER, 4 H, 1 BB" in body
-    assert "Away Pitcher: 7.0 IP, 8 K, 1 ER, 4 H, 1 BB" in body
+    (tmp_path / f"{game_id}_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (tmp_path / f"{game_id}_linescore.json").write_text(json.dumps(lines), encoding="utf-8")
+    (tmp_path / f"{game_id}_players.json").write_text(json.dumps(players), encoding="utf-8")
 
-    # Drive main() in JSON mode to ensure prints work and no BQ write is attempted
-    rc = gd.main(["--team", str(TEAM_ID), "--date", GAME_DATE, "--output", "json", "--json_indir", str(indir)])
+    monkeypatch.setenv("DIGEST_JSON_DIR", str(tmp_path))
+    mod.JSON_DIR = str(tmp_path)
+
+    argv = ["prog", "--team", away_name, "--date", date_iso, "--output", "json"]
+    monkeypatch.setattr(sys, "argv", argv)
+    rc = mod.main()
     assert rc == 0
+
     out = capsys.readouterr().out
-    assert "Final:" in out and "Top Batters" in out and "Pitching" in out
+    assert out.startswith(f"## Final: {away_name} 12-1 {home_name}")
+    assert "### Top Batter for Chicago Cubs" in out
+    assert "### Top Pitcher for Chicago Cubs" in out
 
 
-def test_format_linescore_str_marks_extras():
-    lrow = _linescore_row(extra_innings=True)
-    ls = gd.LinescoreRow(
-        game_id=lrow["game_id"], game_date=lrow["game_date"],
-        home_team_id=lrow["home_team_id"], away_team_id=lrow["away_team_id"],
-        totals=(lrow["total_home"], lrow["total_away"]),
-        innings_home=[lrow.get(f"home_inn_{i}") for i in range(1, 16)],
-        innings_away=[lrow.get(f"away_inn_{i}") for i in range(1, 16)],
-    )
-    s = gd.format_linescore_str(ls, team_is_home=False)
-    assert "(+)" in s
+# ------------------------
+# BigQuery path
+# ------------------------
+def test_build_from_bq_and_main_bq_flow(monkeypatch, capsys):
+    project = "p"; dataset = "d"; team = "Chicago Cubs"
+    game_id = 999001
+    home = {"id": 108, "name": "Los Angeles Angels"}
+    away = {"id": 112, "name": "Chicago Cubs"}
 
-
-# --------------------------
-# BQ mode (read-only)
-# --------------------------
-
-class FakeBQClient:
-    def __init__(self, project="fake"):
-        self.project = project
-
-def _fake_bq_query_factory():
-    """Return a bq_query stub that returns per-sql results."""
-    calls = {"q1": 0, "q2": 0, "q3": 0}
-
-    def _bq_query(client, sql: str, params: Dict[str, Any]):
-        # q1: summaries
-        if "game_summaries" in sql:
-            calls["q1"] += 1
-            return iter([_summary_row()])
-        # q2: linescore
-        if "game_linescore" in sql:
-            calls["q2"] += 1
-            return iter([_linescore_row()])
-        # q3: players
-        if "game_boxscore_players" in sql:
-            calls["q3"] += 1
-            return iter(_players_rows())
+    # Fake bq_query that returns rows based on the SQL
+    def fake_bq_query(client, sql: str, params=None):
+        if "FROM `p.d.game_summaries`" in sql:
+            return [{
+                "game_id": game_id,
+                "game_date": "2025-08-23",
+                "home_team_id": home["id"], "home_team_name": home["name"],
+                "away_team_id": away["id"], "away_team_name": away["name"],
+                "home_score": 1, "away_score": 5, "status": "Final",
+            }]
+        if "FROM `p.d.game_linescore`" in sql:
+            return [
+                {"is_home": False, "inning_num": 1, "runs": 2},
+                {"is_home": False, "inning_num": 2, "runs": 0},
+                {"is_home": False, "inning_num": 3, "runs": 3},
+                {"is_home": True,  "inning_num": 1, "runs": 0},
+                {"is_home": True,  "inning_num": 2, "runs": 0},
+                {"is_home": True,  "inning_num": 3, "runs": 0},
+            ]
+        if "FROM `p.d.game_boxscore_players`" in sql:
+            return _mk_players(game_id, team_id=away["id"], team_name=away["name"])
         raise AssertionError(f"Unexpected SQL: {sql}")
 
-    return _bq_query, calls
+    # Capture digests written
+    writes: List[Dict[str, Any]] = []
 
-def test_load_from_bq_and_main_no_write(monkeypatch, capsys):
-    # Patch client + query so no real BQ is used
-    monkeypatch.setattr(gd, "make_bq_client", lambda project=None: FakeBQClient())
-    fake_query, calls = _fake_bq_query_factory()
-    monkeypatch.setattr(gd, "bq_query", fake_query)
+    # Minimal fake client (only needs .project because we patched bq_query)
+    client = type("FakeClient", (), {"project": project})()
 
-    triples = gd.load_from_bq(TEAM_ID, gd.dt.date.fromisoformat(GAME_DATE))
-    assert len(triples) == 1
-    s, l, players = triples[0]
-    assert s.game_id == GAME_ID
-    assert len(players) == 3
+    # Monkeypatch the BQ functions the script calls
+    monkeypatch.setattr(mod, "bq_query", fake_bq_query)
+    monkeypatch.setattr(mod, "bq_client_or_none", lambda proj: client)
+    monkeypatch.setattr(mod, "bq_write_digest", lambda c, p, d, row: writes.append(row))
 
-    # Drive main() in BQ mode with --no_write (so we don't need bigquery package)
-    rc = gd.main(["--team", str(TEAM_ID), "--date", GAME_DATE, "--output", "bq", "--no_write"])
+    # Run main in bq mode
+    argv = [
+        "prog",
+        "--team", team,
+        "--date", "2025-08-23",
+        "--output", "bq",
+        "--bq_project", project,
+        "--bq_dataset", dataset,
+    ]
+    import sys as _sys
+    monkeypatch.setattr(_sys, "argv", argv)
+
+    rc = mod.main()
     assert rc == 0
-    out = capsys.readouterr().out
-    assert "Final:" in out and "Top Batters" in out and "Pitching" in out
 
-    # Ensure our fake was hit properly
-    assert calls["q1"] >= 1 and calls["q2"] >= 1 and calls["q3"] >= 1
+    assert len(writes) == 1
+    row = writes[0]
+    assert row["game_id"] == game_id
+    assert row["team_id"] == away["id"]
+    assert row["team_name"] == team
+    assert row["game_date"] == "2025-08-23"
+    assert row["created_at"].endswith("Z")
+    assert "## Final: Chicago Cubs 5-1 Los Angeles Angels" in row["digest_md"]
+
+
+# ------------------------
+# Env / output mode
+# ------------------------
+def test_is_cloud_env_and_default_output(monkeypatch):
+    for k in ["K_SERVICE","CLOUD_RUN_JOB","GAE_ENV","GOOGLE_CLOUD_PROJECT","BQ_PROJECT"]:
+        monkeypatch.delenv(k, raising=False)
+    assert mod.is_cloud_env() is False
+    assert mod.default_output_mode() == "json"
+
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "x")
+    assert mod.is_cloud_env() is True
+    assert mod.default_output_mode() == "bq"

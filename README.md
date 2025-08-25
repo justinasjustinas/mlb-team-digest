@@ -37,17 +37,17 @@ BigQuery  ──▶  Digest (game_digest.py) ──▶  BigQuery: mlb.game_diges
 ## Example of final digest output
 
 ```
-## Final: Chicago Cubs 5-3 St. Louis Cardinals
+## Final: Chicago Cubs 4-3 Los Angeles Angels
 
 ### Linescore
-Away: 1 0 0 1 0 0 0 1 0
-Home: 0 0 2 0 0 1 2 0 -
+Away: 0 0 1 1 2 0 0 0 0
+Home: 1 0 0 0 0 2 0 0 0
 
 ### Top Batter for Chicago Cubs
-- Seiya Suzuki: 3.20 BAT_SCORE, 1 HR, 2 RBI, .320 AVG, .380 OBP, 3.000 SLG, .900 OPS
+- Kyle Tucker: 7.50 BAT_SCORE, 0 HR, 1 RBI, .333 AVG, .600 OBP, .333 SLG, .933 OPS
 
 ### Top Pitcher for Chicago Cubs
-- Justin Steele: 3.00 PITCH_SCORE, 7.0 IP, 2.90 ERA, 1.00 WHIP
+- Jameson Taillon: 26.00 PITCH_SCORE, 5.0 IP, 1.80 ERA, 0.60 WHIP
 ```
 
 > Note: This is a representative example. Your actual output depends on the selected team/date and the underlying data, obviously.
