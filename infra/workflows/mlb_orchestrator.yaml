@@ -1,5 +1,5 @@
 main:
-  params: [input] # single param; expects { team_id: 112, date: "YYYY-MM-DD" (optional) }
+  params: [input] # expects: {"team_id": 112, "date": "YYYY-MM-DD" (optional)}
   steps:
     - init:
         assign:
@@ -16,19 +16,19 @@ main:
               - fail:
                   raise: "team_id is required"
 
-    # date_str = input.date if provided, else today in ET (YYYY-MM-DD)
-    - set_date_if_provided:
-        switch:
-          - condition: ${ input.date != null }
-            steps:
-              - use_provided:
-                  assign:
-                    - date_str: ${ string(input.date) }
-          - condition: ${ input.date == null }
-            steps:
-              - compute_today_et:
-                  assign:
-                    - date_str: ${ text.substring(time.format(sys.now(), east_tz), 0, 10) }
+    # Safe date handling: try to read input.date; if missing, use today in ET
+    - set_date:
+        try:
+          steps:
+            - use_provided:
+                assign:
+                  - date_str: ${ string(input.date) }
+        except:
+          as: e
+          steps:
+            - compute_today_et:
+                assign:
+                  - date_str: ${ text.substring(time.format(sys.now(), east_tz), 0, 10) }
 
     # Fetch day schedule for the team
     - fetch_schedule:
