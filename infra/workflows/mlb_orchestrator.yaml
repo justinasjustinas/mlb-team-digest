@@ -1,0 +1,168 @@
+main:
+  params: [input] # single param; expects { team_id: 112, date: "YYYY-MM-DD" (optional) }
+  steps:
+    - init:
+        assign:
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - region: ${sys.get_env("GOOGLE_CLOUD_LOCATION")}
+          - east_tz: "America/New_York"
+          - team_id: ${input.team_id}
+          - date_str: ""
+
+    - require_team_id:
+        switch:
+          - condition: ${ team_id == null }
+            steps:
+              - fail:
+                  raise: "team_id is required"
+
+    # date_str = input.date if provided, else today in ET (YYYY-MM-DD)
+    - set_date_if_provided:
+        switch:
+          - condition: ${ input.date != null }
+            steps:
+              - use_provided:
+                  assign:
+                    - date_str: ${ string(input.date) }
+          - condition: ${ input.date == null }
+            steps:
+              - compute_today_et:
+                  assign:
+                    - date_str: ${ text.substring(time.format(sys.now(), east_tz), 0, 10) }
+
+    # Fetch day schedule for the team
+    - fetch_schedule:
+        call: http.get
+        args:
+          url: https://statsapi.mlb.com/api/v1/schedule
+          query:
+            sportId: "1"
+            teamId: ${string(team_id)}
+            date: ${date_str}
+        result: sched
+
+    # Build games list safely
+    - init_games:
+        assign:
+          - games: []
+    - set_games_if_any:
+        switch:
+          - condition: ${ len(sched.body.dates) > 0 }
+            steps:
+              - assign_games:
+                  assign:
+                    - games: ${sched.body.dates[0].games}
+
+    # Iterate games with index i
+    - init_loop:
+        assign:
+          - i: 0
+          - n: ${len(games)}
+
+    - loop_guard:
+        switch:
+          - condition: ${i >= n}
+            next: done_all_games
+          - condition: ${i < n}
+            next: process_game
+
+    - process_game:
+        assign:
+          - g: ${games[i]}
+          - game_pk: ${g.gamePk}
+          - official_date: ${g.officialDate}
+          - start_utc: ${g.gameDate} # RFC3339 UTC
+          - attempts: 0
+          - max_attempts: 48 # up to 12 hours
+
+    # Sleep until scheduled start, then +90 minutes
+    - sleep_until_start:
+        call: sys.sleep_until
+        args:
+          time: ${start_utc}
+
+    - sleep_plus_90m:
+        call: sys.sleep
+        args:
+          seconds: 5400
+
+    # poll loop
+    - poll_status:
+        call: http.get
+        args:
+          url: ${"https://statsapi.mlb.com/api/v1.1/game/" + string(game_pk) + "/feed/live"}
+        result: feed
+
+    - extract_status:
+        assign:
+          - abstract: ${ text.to_lower(string(feed.body.gameData.status.abstractGameState)) }
+          - detailed: ${ text.to_lower(string(feed.body.gameData.status.detailedState)) }
+
+    - final_check_abstract:
+        switch:
+          - condition: ${abstract == "final"}
+            next: run_ingest
+          - condition: ${abstract != "final"}
+            next: final_check_detailed
+
+    - final_check_detailed:
+        switch:
+          - condition: ${detailed == "final"}
+            next: run_ingest
+          - condition: ${detailed != "final"}
+            next: not_final
+
+    - run_ingest:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/mlb-ingest"}
+          body:
+            overrides:
+              containerOverrides:
+                - args: ${["--team", string(team_id), "--date", date_str]}
+        result: ingest_exec
+
+    - run_digest:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/mlb-digest"}
+          body:
+            overrides:
+              containerOverrides:
+                - args: ${["--team", string(team_id), "--date", date_str]}
+        result: digest_exec
+
+    - next_game_after_final:
+        assign:
+          - i: ${i + 1}
+        next: loop_guard
+
+    - not_final:
+        call: sys.sleep
+        args:
+          seconds: 900
+        next: incr_attempts
+
+    - incr_attempts:
+        assign:
+          - attempts: ${attempts + 1}
+        next: cap_or_poll
+
+    - cap_or_poll:
+        switch:
+          - condition: ${attempts >= max_attempts}
+            steps:
+              - log_give_up:
+                  call: sys.log
+                  args:
+                    text: ${"Max attempts reached for game " + string(game_pk) + " on " + date_str}
+              - advance_game:
+                  assign:
+                    - i: ${i + 1}
+              - next_after_cap:
+                  next: loop_guard
+          - condition: ${attempts < max_attempts}
+            next: poll_status
+
+    - done_all_games:
+        return: ${"Done for team " + string(team_id) + " on " + date_str}

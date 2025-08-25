@@ -28,9 +28,9 @@ resource "google_project_service" "apis" {
     "workflows.googleapis.com",
     "logging.googleapis.com",
   ])
-  project             = var.project_id
-  service             = each.key
-  disable_on_destroy  = false
+  project            = var.project_id
+  service            = each.key
+  disable_on_destroy = false
 }
 
 # Artifact Registry
@@ -76,48 +76,52 @@ resource "google_service_account" "scheduler" {
 
 # IAM for runner SA (pull image + write/query BQ)
 resource "google_project_iam_member" "runner_ar_reader" {
-  role   = "roles/artifactregistry.reader"
-  member = "serviceAccount:${google_service_account.runner.email}"
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.runner.email}"
 }
-
 resource "google_project_iam_member" "runner_bq_jobuser" {
-  role   = "roles/bigquery.jobUser"
-  member = "serviceAccount:${google_service_account.runner.email}"
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.runner.email}"
 }
-
 resource "google_project_iam_member" "runner_bq_dataeditor" {
-  role   = "roles/bigquery.dataEditor"
-  member = "serviceAccount:${google_service_account.runner.email}"
+  project = var.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = "serviceAccount:${google_service_account.runner.email}"
 }
 
-# IAM for Workflows SA (to run Cloud Run jobs) + logs
-resource "google_project_iam_member" "wf_run_dev" {
-  role   = "roles/run.developer"
-  member = "serviceAccount:${google_service_account.wf.email}"
-}
-
-resource "google_project_iam_member" "wf_logs" {
-  role   = "roles/logging.logWriter"
-  member = "serviceAccount:${google_service_account.wf.email}"
-}
-
-# Workflows (ensure the filename below matches .yaml/.yml in infra/workflows/)
 resource "google_workflows_workflow" "orchestrator" {
   name            = "mlb-orchestrator"
   region          = var.region
   description     = "Sleep until start+90m; run ingest every 15m until FINAL; then run digest once."
   service_account = google_service_account.wf.email
+
+  # Make sure this path/extension matches your file on disk:
+  #   infra/workflows/mlb_orchestrator.yaml
   source_contents = file("${path.module}/../workflows/mlb_orchestrator.yaml")
-  depends_on      = [google_project_service.apis]
+
+  depends_on = [google_project_service.apis]
 }
 
-# Allow Scheduler SA to invoke the Workflow
-resource "google_workflows_workflow_iam_member" "wf_invoker" {
-  project  = var.project_id
-  region   = var.region
-  workflow = google_workflows_workflow.orchestrator.name
-  role     = "roles/workflows.invoker"
-  member   = "serviceAccount:${google_service_account.scheduler.email}"
+
+# IAM for Workflows SA (run Cloud Run) + logs
+resource "google_project_iam_member" "wf_run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.wf.email}"
+}
+resource "google_project_iam_member" "wf_logs" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.wf.email}"
+}
+
+# Scheduler SA can invoke Workflows (project-level)
+resource "google_project_iam_member" "scheduler_workflows_invoker" {
+  project = var.project_id
+  role    = "roles/workflows.invoker"
+  member  = "serviceAccount:${google_service_account.scheduler.email}"
 }
 
 # Single image used by both jobs
@@ -137,8 +141,16 @@ resource "google_cloud_run_v2_job" "ingest" {
 
       containers {
         image = local.image_uri
-        env { name = "OUTPUT_SINK", value = "bq" }
-        env { name = "BQ_LOCATION", value = var.bq_location }
+
+        env {
+          name  = "OUTPUT_SINK"
+          value = "bq"
+        }
+
+        env {
+          name  = "BQ_LOCATION"
+          value = var.bq_location
+        }
       }
 
       max_retries = 0
@@ -161,7 +173,11 @@ resource "google_cloud_run_v2_job" "digest" {
       containers {
         image   = local.image_uri
         command = ["python", "game_digest.py"]
-        env { name = "BQ_LOCATION", value = var.bq_location }
+
+        env {
+          name  = "BQ_LOCATION"
+          value = var.bq_location
+        }
       }
 
       max_retries = 0
@@ -174,27 +190,23 @@ resource "google_cloud_run_v2_job" "digest" {
 # Cloud Scheduler jobs (one per team_id) -> invokes Workflow at 8am ET
 resource "google_cloud_scheduler_job" "daily_team" {
   for_each  = toset([for t in var.team_ids : tostring(t)])
-
   name      = "run-mlb-orchestrator-${each.value}"
-  region    = var.region
+  region    = var.scheduler_region
   schedule  = var.scheduler_cron
   time_zone = var.scheduler_tz
 
   http_target {
     uri         = "https://workflowexecutions.googleapis.com/v1/projects/${var.project_id}/locations/${var.region}/workflows/${google_workflows_workflow.orchestrator.name}/executions"
     http_method = "POST"
-
-    oauth_token {
-      service_account_email = google_service_account.scheduler.email
-    }
-
+    oauth_token { service_account_email = google_service_account.scheduler.email }
     headers = { "Content-Type" = "application/json" }
-
-    # Body: {"argument":"{\"team_ids\":[112]}"}
     body = base64encode(jsonencode({
-      argument = jsonencode({ team_ids = [tonumber(each.value)] })
-    }))
+    argument = jsonencode({ team_id = tonumber(each.value) })
+  }))
   }
 
-  depends_on = [google_workflows_workflow_iam_member.wf_invoker]
+  depends_on = [
+    google_project_iam_member.scheduler_workflows_invoker,
+    google_workflows_workflow.orchestrator
+  ]
 }
