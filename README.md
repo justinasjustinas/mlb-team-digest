@@ -193,9 +193,9 @@ This creates the Artifact Registry, BQ dataset, service accounts/IAM, Cloud Run 
    - `mlb-ingest`
    - `mlb-digest`
 
----
-
 This keeps day-to-day deploys simple (**merge → build → rollout**) while allowing you to pin stable releases to semantic versions (**tag → release → rollout**).
+
+---
 
 ### IAM / Auth you should have (one-time)
 
@@ -217,7 +217,7 @@ Use **SemVer**: `vMAJOR.MINOR.PATCH` → examples: `v1.0.0`, `v1.2.3`.
 ```bash
 # from a clean main (or release) branch
 git pull
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
