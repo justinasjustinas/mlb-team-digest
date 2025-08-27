@@ -1,14 +1,36 @@
+# MLB Orchestrator (Workflows)
+# Purpose:
+#   - Determine the target game date (explicit input or "today" in America/New_York)
+#   - Fetch the MLB schedule for a team on that date
+#   - For each scheduled game: wait until start, then +90 minutes, then poll the live feed
+#   - When a game is FINAL, trigger mlb-ingest and mlb-digest Cloud Run jobs
+# Notes:
+#   - MEMORY HYGIENE is critical: never hold large JSON blobs longer than needed.
+#   - Workflows has a memory cap; we immediately free large vars (sched, feed, g) after extracting primitives.
+#   - All date strings are YYYY-MM-DD; MLB schedule "date" expects ET semantics.
+#   - Sleep behavior: sleep until scheduled start_utc (RFC3339), then an extra 90 minutes, then poll.
+
 main:
   params: [input] # expects: {"team_id": 112, "date": "YYYY-MM-DD" (optional)}
   steps:
+    # -----------------------------
+    # Initialize core variables
+    # -----------------------------
     - init:
         assign:
+          # Project and region are read from the Workflows runtime environment.
           - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
           - region: ${sys.get_env("GOOGLE_CLOUD_LOCATION")}
+          # Fixed timezone for "baseball day" logic. The MLB schedule "date" is aligned to ET.
           - east_tz: "America/New_York"
+          # Required input: numeric team ID (e.g., 112 for Cubs).
           - team_id: ${input.team_id}
+          # We'll fill this with either input.date or computed ET "today".
           - date_str: ""
 
+    # -----------------------------
+    # Fail fast if team_id is missing
+    # -----------------------------
     - require_team_id:
         switch:
           - condition: ${ team_id == null }
@@ -16,7 +38,12 @@ main:
               - fail:
                   raise: "team_id is required"
 
-    # Safe date handling: try to read input.date; if missing, use today in ET
+    # ------------------------------------------------------------
+    # Resolve date_str robustly:
+    #   - If input.date exists and is non-empty, use it.
+    #   - Otherwise, compute "today" in America/New_York (YYYY-MM-DD).
+    # Why try/except? Accessing input.date when it doesn't exist throws.
+    # ------------------------------------------------------------
     - set_date:
         try:
           steps:
@@ -28,9 +55,15 @@ main:
           steps:
             - compute_today_et:
                 assign:
+                  # time.format(sys.now(), east_tz) returns RFC3339 with offset for ET;
+                  # substring 0..10 yields YYYY-MM-DD.
                   - date_str: ${ text.substring(time.format(sys.now(), east_tz), 0, 10) }
 
-    # Fetch day schedule for the team
+    # ------------------------------------------------------------
+    # Fetch the day's schedule for this team
+    #   - statsapi schedule endpoint requires sportId=1 (MLB), teamId, and date (YYYY-MM-DD).
+    #   - sched.body can be large; we'll copy only what we need, then null it out.
+    # ------------------------------------------------------------
     - fetch_schedule:
         call: http.get
         args:
@@ -41,10 +74,14 @@ main:
             date: ${date_str}
         result: sched
 
-    # Build games list safely
+    # ------------------------------------------------------------
+    # Extract the games array safely:
+    #   - If there are dates, take the first date's games array.
+    #   - Then immediately free the big schedule object to keep memory low.
+    # ------------------------------------------------------------
     - init_games:
         assign:
-          - games: []
+          - games: [] # default empty
     - set_games_if_any:
         switch:
           - condition: ${ len(sched.body.dates) > 0 }
@@ -52,8 +89,26 @@ main:
               - assign_games:
                   assign:
                     - games: ${sched.body.dates[0].games}
+    - free_sched:
+        assign:
+          - sched: null # free memory: sched can be a large nested object
 
-    # Iterate games with index i
+    # ------------------------------------------------------------
+    # Early exit on days with no games:
+    #   - Saves us from looping logic below and makes log/return explicit.
+    # ------------------------------------------------------------
+    - no_games_guard:
+        switch:
+          - condition: ${ len(games) == 0 }
+            steps:
+              - done_none:
+                  return: ${"No games for team " + string(team_id) + " on " + date_str}
+
+    # ------------------------------------------------------------
+    # Iterate through the games for this date (index-based loop).
+    #   - i: current game index
+    #   - n: total games
+    # ------------------------------------------------------------
     - init_loop:
         assign:
           - i: 0
@@ -62,20 +117,31 @@ main:
     - loop_guard:
         switch:
           - condition: ${i >= n}
-            next: done_all_games
+            next: done_all_games # finished all games
           - condition: ${i < n}
-            next: process_game
+            next: process_game # process current game
 
+    # ------------------------------------------------------------
+    # Per-game extraction:
+    #   - g is the current game object; we pull out only primitives we need, then free g.
+    #   - start_utc: MLB gives RFC3339 UTC start; it's suitable for sys.sleep_until.
+    #   - attempts / max_attempts: used for polling after +90 minutes.
+    # ------------------------------------------------------------
     - process_game:
         assign:
           - g: ${games[i]}
           - game_pk: ${g.gamePk}
-          - official_date: ${g.officialDate}
-          - start_utc: ${g.gameDate} # RFC3339 UTC
+          - official_date: ${g.officialDate} # informational (ET-based date of record)
+          - start_utc: ${g.gameDate} # RFC3339 UTC start
           - attempts: 0
-          - max_attempts: 48 # up to 12 hours
+          - max_attempts: 48 # 48 * 15min = 12h worst-case polling window
+          - g: null # free per-game object to save memory
 
-    # Sleep until scheduled start, then +90 minutes
+    # ------------------------------------------------------------
+    # Wait for the game to start, then wait an additional buffer.
+    #   - We sleep until scheduled start_utc to avoid long polling before first pitch.
+    #   - +90 minutes buffer: many games won't be FINAL by then, but it reduces poll time.
+    # ------------------------------------------------------------
     - sleep_until_start:
         call: sys.sleep_until
         args:
@@ -84,9 +150,16 @@ main:
     - sleep_plus_90m:
         call: sys.sleep
         args:
-          seconds: 5400
+          seconds: 5400 # 90 minutes
 
-    # poll loop
+    # ------------------------------------------------------------
+    # Poll loop:
+    #   - Fetch the live feed (large JSON), immediately extract tiny status fields,
+    #     then null out the big payload to stay under memory limits.
+    #   - We check both abstractGameState and detailedState for robustness.
+    #   - If FINAL, trigger ingest and digest, then proceed to next game.
+    #   - Else, sleep 15 min and retry until cap.
+    # ------------------------------------------------------------
     - poll_status:
         call: http.get
         args:
@@ -95,8 +168,11 @@ main:
 
     - extract_status:
         assign:
+          # Normalize to lowercase to avoid casing edge-cases
           - abstract: ${ text.to_lower(string(feed.body.gameData.status.abstractGameState)) }
           - detailed: ${ text.to_lower(string(feed.body.gameData.status.detailedState)) }
+          # CRITICAL: free the huge live feed immediately after extracting status fields
+          - feed: null
 
     - final_check_abstract:
         switch:
@@ -112,6 +188,12 @@ main:
           - condition: ${detailed != "final"}
             next: not_final
 
+        # ------------------------------------------------------------
+    # Trigger Cloud Run job: mlb-ingest
+    #   - Passes the team and date as CLI args.
+    #   - We do not await job completion (jobs are async),
+    #     but we enforce that mlb-digest runs AFTER ingest.
+    # ------------------------------------------------------------
     - run_ingest:
         call: googleapis.run.v2.projects.locations.jobs.run
         args:
@@ -121,7 +203,24 @@ main:
               containerOverrides:
                 - args: ${["--team", string(team_id), "--date", date_str]}
         result: ingest_exec
+        next: wait_before_digest
 
+    # ------------------------------------------------------------
+    # Safety buffer between ingest and digest
+    #   - Allow ingest time to vary; three minutes should be
+    #     enough for BQ writes to complete before digest runs.
+    # ------------------------------------------------------------
+    - wait_before_digest:
+        call: sys.sleep
+        args:
+          seconds: 180 # 3 minutes buffer
+        next: run_digest
+
+    # ------------------------------------------------------------
+    # Trigger Cloud Run job: mlb-digest
+    #   - Always follows ingest + buffer.
+    #   - Reads the data ingest has written.
+    # ------------------------------------------------------------
     - run_digest:
         call: googleapis.run.v2.projects.locations.jobs.run
         args:
@@ -131,16 +230,25 @@ main:
               containerOverrides:
                 - args: ${["--team", string(team_id), "--date", date_str]}
         result: digest_exec
+        next: next_game_after_final
 
+    # ------------------------------------------------------------
+    # Move to the next scheduled game for this date.
+    # ------------------------------------------------------------
     - next_game_after_final:
         assign:
           - i: ${i + 1}
         next: loop_guard
 
+    # ------------------------------------------------------------
+    # Not final yet:
+    #   - Sleep 15 minutes to be gentle on the API and Workflows quotas.
+    #   - Then increment attempts and either poll again or give up politely.
+    # ------------------------------------------------------------
     - not_final:
         call: sys.sleep
         args:
-          seconds: 900
+          seconds: 900 # 15 minutes
         next: incr_attempts
 
     - incr_attempts:
@@ -164,5 +272,8 @@ main:
           - condition: ${attempts < max_attempts}
             next: poll_status
 
+    # ------------------------------------------------------------
+    # All games for this date are processed (FINAL or gave up).
+    # ------------------------------------------------------------
     - done_all_games:
         return: ${"Done for team " + string(team_id) + " on " + date_str}
