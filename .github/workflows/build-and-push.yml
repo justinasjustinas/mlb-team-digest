@@ -18,8 +18,8 @@ env:
   REGION: ${{ vars.REGION }}
   REPO_NAME: ${{ vars.REPO_NAME }}
   IMAGE_NAME: ${{ vars.IMAGE_NAME }}
-  WORKLOAD_IDENTITY_PROVIDER: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
-  SERVICE_ACCOUNT_EMAIL: ${{ vars.SERVICE_ACCOUNT_EMAIL }}
+  WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+  SERVICE_ACCOUNT_EMAIL: ${{ secrets.WIF_SERVICE_ACCOUNT }}
   REGISTRY: ${{ vars.REGION }}-docker.pkg.dev
   IMAGE: ${{ vars.REGION }}-docker.pkg.dev/${{ vars.PROJECT_ID }}/${{ vars.REPO_NAME }}/${{ vars.IMAGE_NAME }}
 
@@ -137,3 +137,59 @@ jobs:
           gcloud run jobs update mlb-ingest --image "$IMAGE_TAGGED" --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}"
           gcloud run jobs update mlb-digest --image "$IMAGE_TAGGED" --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}"
           echo "Done."
+
+  deploy-cloud-workflows:
+    # Run after image build; change to `needs: rollout` if you want it after rollout.
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' # don't try to redeploy Workflows on tag events
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for google-github-actions/auth OIDC
+    env:
+      PROJECT_ID: ${{ vars.PROJECT_ID }}
+      REGION: ${{ vars.REGION }}
+      WF_NAME: mlb-orchestrator
+      WF_SA: mlb-workflows-sa@${{ vars.PROJECT_ID }}.iam.gserviceaccount.com
+      WF_PATH: infra/workflows/mlb_orchestrator.yaml
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Google Auth (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Only redeploy Workflows if something under infra/workflows changed in the merge
+      - name: Detect orchestrator changes
+        id: changed
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            orchestrator:
+              - 'infra/workflows/**'
+
+      - name: Deploy Cloud Workflow (only if changed)
+        if: steps.changed.outputs.orchestrator == 'true'
+        run: |
+          set -euo pipefail
+          gcloud workflows deploy "$WF_NAME" \
+            --location "$REGION" \
+            --project "$PROJECT_ID" \
+            --source "$WF_PATH" \
+            --service-account "$WF_SA"
+          echo "✅ Deployed $WF_NAME from $WF_PATH"
+
+      - name: Show workflow revision
+        if: steps.changed.outputs.orchestrator == 'true'
+        run: |
+          gcloud workflows describe "$WF_NAME" \
+            --location "$REGION" \
+            --project "$PROJECT_ID" \
+            --format="table(name, revisionId, state, updateTime)"
