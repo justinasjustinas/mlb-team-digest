@@ -168,7 +168,7 @@ main:
 
     - extract_status:
         assign:
-          # Normalize to lowercase to avoid casing edge-cases
+          # Normalize to lowercase to avoid casing edge-cases!
           - abstract: ${ text.to_lower(string(feed.body.gameData.status.abstractGameState)) }
           - detailed: ${ text.to_lower(string(feed.body.gameData.status.detailedState)) }
           # CRITICAL: free the huge live feed immediately after extracting status fields
