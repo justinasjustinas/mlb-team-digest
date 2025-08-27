@@ -103,7 +103,9 @@ Environment (optional):
 
 ## Infrastructure (Terraform + GCP)
 
-### What gets created
+See **infra/README.md** for the full overview of the infra / architecture.
+
+### What gets created with Terraform
 
 - **Artifact Registry** (Docker) for your images.
 - **BigQuery dataset** (e.g., `mlb`) — tables are created by the code at first write.
@@ -181,6 +183,7 @@ This creates the Artifact Registry, BQ dataset, service accounts/IAM, Cloud Run 
 4. **Rolls out** the `:edge` image to Cloud Run jobs:
    - `mlb-ingest`
    - `mlb-digest`
+5. **Rolls out** the Workflow (if changes detected).
 
 ### What happens when you use a tag
 
@@ -194,17 +197,6 @@ This creates the Artifact Registry, BQ dataset, service accounts/IAM, Cloud Run 
    - `mlb-digest`
 
 This keeps day-to-day deploys simple (**merge → build → rollout**) while allowing you to pin stable releases to semantic versions (**tag → release → rollout**).
-
----
-
-### IAM / Auth you should have (one-time)
-
-- A **workload identity pool + provider** allowing GitHub OIDC (`token.actions.githubusercontent.com`).
-- A **service account** (e.g. `github-actions@mlb-team-digest.iam.gserviceaccount.com`) with:
-  - `roles/artifactregistry.writer` (push images)
-  - `roles/run.admin` + `roles/iam.serviceAccountUser` (to roll out)
-- An **impersonation** step in the workflow using that SA.
-- Jobs/services should run as a runtime SA that has least-privilege to the resources they need.
 
 ---
 
