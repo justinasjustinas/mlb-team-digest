@@ -170,6 +170,37 @@ def test_parse_ip_to_outs():
     assert mod.parse_ip_to_outs("abc") == 0
 
 
+def test_http_get_json_retries_and_succeeds(monkeypatch):
+    calls = {"count": 0}
+
+    class Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_get(url, params=None, timeout=25):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise mod.requests.exceptions.RequestException("boom")
+        return Resp()
+
+    monkeypatch.setattr(mod.requests, "get", fake_get)
+    out = mod.http_get_json("http://example.com", retries=1, backoff=0)
+    assert out == {"ok": True}
+    assert calls["count"] == 2
+
+
+def test_http_get_json_raises_after_retries(monkeypatch):
+    def fake_get(url, params=None, timeout=25):
+        raise mod.requests.exceptions.Timeout("timeout")
+
+    monkeypatch.setattr(mod.requests, "get", fake_get)
+    with pytest.raises(mod.HTTPGetError):
+        mod.http_get_json("http://example.com", retries=1, backoff=0)
+
+
 def test_compute_batting_metrics_simple():
     row = {
         "AB": 4, "H": 2, "BB": 0, "HBP": 0, "SF": 0,

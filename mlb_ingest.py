@@ -25,6 +25,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional
 
 import requests  # pip install requests
@@ -144,10 +145,27 @@ def compute_pitching_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------
 # MLB API
 # ---------------
-def http_get_json(url: str, params: Dict[str, Any] | None = None, timeout: int = 25) -> Dict[str, Any]:
-    r = requests.get(url, params=params or {}, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
+class HTTPGetError(Exception):
+    """Raised when http_get_json fails after retries."""
+
+
+def http_get_json(
+    url: str,
+    params: Dict[str, Any] | None = None,
+    timeout: int = 25,
+    retries: int = 3,
+    backoff: float = 0.5,
+) -> Dict[str, Any]:
+    for attempt in range(retries + 1):
+        try:
+            r = requests.get(url, params=params or {}, timeout=timeout)
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.RequestException as e:
+            log(f"HTTP GET failed for {url}: {e}")
+            if attempt == retries:
+                raise HTTPGetError(f"Failed to fetch {url}") from e
+            time.sleep(backoff * (2 ** attempt))
 
 def find_final_games_for_team(date_iso: str, team: str) -> List[Dict[str, Any]]:
     sched = http_get_json(f"{API}/schedule", {"date": date_iso, "sportId": 1})
