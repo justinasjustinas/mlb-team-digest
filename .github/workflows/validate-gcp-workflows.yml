@@ -1,0 +1,69 @@
+name: Validate Google Cloud Workflows
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/infra/workflows/*.yaml"
+      - "**/infra/workflows/*.yml" # optional, in case you use .yml
+
+permissions:
+  contents: read
+  id-token: write # required for Workload Identity Federation
+
+env:
+  PROJECT_ID: ${{ vars.PROJECT_ID }}
+  REGION: ${{ vars.REGION_FOR_WORKFLOWS }}
+  WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+  SERVICE_ACCOUNT_EMAIL: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+  REGISTRY: ${{ vars.REGION }}-docker.pkg.dev
+  WORKFLOW_GLOBS: |
+    **/infra/workflows/*.yaml
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Validate Workflows (gcloud --validate-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          EXIT=0
+          for GLOB in $WORKFLOW_GLOBS; do
+            for FILE in $GLOB; do
+              echo "::group::Validating $FILE"
+              NAME="syntax-check-$(echo "$FILE" | tr '/.' '--')"
+              gcloud workflows deploy "$NAME" \
+                --source="$FILE" \
+                --location="$REGION" \
+                --validate-only \
+                --quiet
+              RC=$?
+              echo "::endgroup::"
+              if [ $RC -ne 0 ]; then
+                echo "❌ Validation failed for $FILE"
+                EXIT=1
+              else
+                echo "✅ $FILE is valid"
+              fi
+            done
+          done
+          if [ $EXIT -ne 0 ]; then
+            echo "One or more workflow files failed validation."
+            exit $EXIT
+          fi
