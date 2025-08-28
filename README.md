@@ -5,17 +5,6 @@ A small pipeline that ingests **just-enough** MLB game data for a single team, s
 Please note that I'm rather new to baseball, let alone baseball stats. Therefore, consider this **work-in-progress** project as a way to learn more about this fascinating sport and to play around with IaC, certain Cloud concepts, etc.
 
 ---
-## Base image
-
-The Dockerfile pins the Python runtime to a specific digest for reproducible builds:
-
-```
-FROM python@sha256:6d09f05f9bebe88e6100f8feaf8b7eaacf7d5005c45e26dfec66f64fdf75f1a4
-```
-
-A scheduled GitHub Action (`check-python-base`) runs monthly to verify whether the upstream `python:3.12-slim` tag has moved so the digest can be updated here and in the Dockerfile.
-
----
 
 ## How it works (high level)
 
