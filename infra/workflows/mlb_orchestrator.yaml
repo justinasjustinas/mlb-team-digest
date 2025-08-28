@@ -171,27 +171,23 @@ main:
 
     - extract_status:
         assign:
-          - status_game: ${list.filter(sched.body.dates[0].games, g, g.gamePk == game_pk)[0]}
-          # Normalize to lowercase to avoid casing edge-cases!
-          - abstract: ${ text.to_lower(string(status_game.status.abstractGameState)) }
-          - detailed: ${ text.to_lower(string(status_game.status.detailedState)) }
-          # Free the schedule payload after extracting status fields.
+          # Pull the first matching game safely
+          - _matches: ${ list.filter(sched.body.dates[0].games, g, g.gamePk == game_pk) }
+          - status_game: ${ len(_matches) > 0 ? _matches[0] : null }
+          # Normalize to lowercase (fall back to empty strings if null)
+          - abstract: ${ text.to_lower(string(status_game != null ? status_game.status.abstractGameState : "")) }
+          - detailed: ${ text.to_lower(string(status_game != null ? status_game.status.detailedState : "")) }
+          # Free payloads
+          - _matches: null
           - status_game: null
           - sched: null
+        next: final_status_check
 
-    - final_check_abstract:
+    - final_status_check:
         switch:
-          - condition: ${abstract == "final"}
+          - condition: ${ abstract == "final" || detailed == "final" }
             next: run_ingest
-          - condition: ${abstract != "final"}
-            next: final_check_detailed
-
-    - final_check_detailed:
-        switch:
-          - condition: ${detailed == "final"}
-            next: run_ingest
-          - condition: ${detailed != "final"}
-            next: not_final
+          - next: not_final
 
         # ------------------------------------------------------------
     # Trigger Cloud Run job: mlb-ingest
