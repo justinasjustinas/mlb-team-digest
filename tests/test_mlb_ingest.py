@@ -153,14 +153,6 @@ def make_boxscore_from_feed(feed: Dict[str, Any]) -> Dict[str, Any]:
 # ------------------------
 # Unit tests: pure helpers
 # ------------------------
-def test_innings_from_outs():
-    assert mod.innings_from_outs(0) == 0.0
-    assert mod.innings_from_outs(3) == 1.0
-    assert mod.innings_from_outs(4) == 1.1
-    assert mod.innings_from_outs(5) == 1.2
-    assert mod.innings_from_outs(19) == 6.1  # 6 innings + 1 out
-
-
 def test_parse_ip_to_outs():
     assert mod.parse_ip_to_outs(None) == 0
     assert mod.parse_ip_to_outs(2) == 6  # int means "innings", convert to outs
@@ -181,22 +173,20 @@ def test_compute_batting_metrics_simple():
     assert math.isclose(out["OBP"], 0.5)
     assert math.isclose(out["SLG"], 0.75)
     assert math.isclose(out["OPS"], 1.25)
-    # BAT_SCORE = 5*HR + 3*(D2+D3) + 2*(BB+HBP+SB) + singles + 1.5*RBI + R
-    # singles = H - D2 - D3 - HR = 1
-    # = 0 + 3*(1) + 0 + 1 + 1.5*1 + 1 = 3 + 1 + 1.5 + 1 = 6.5
-    assert math.isclose(out["BAT_SCORE"], 6.5)
+    # BAT_SCORE_RAW = 6.5 -> scaled 0..100 with LO=0, HI=12 => 54.17
+    assert math.isclose(out["BAT_SCORE"], 54.17, rel_tol=1e-3)
 
 
 def test_compute_pitching_metrics_simple():
     row = {"IP": "7.0", "ER": 1, "H": 4, "BB": 1, "HR": 0, "SO": 8}
     out = mod.compute_pitching_metrics(dict(row))
-    # IP = 7.0 -> outs=21, ip=7.0; ERA = 1*9/7 ≈ 1.2857; WHIP = (4+1)/7 ≈ 0.7143
+    # IP = 7.0 -> outs=21, ip=7.0; ERA = round(9/7, 2) = 1.29; WHIP = round(5/7, 2) = 0.71
     assert out["outs"] == 21
     assert math.isclose(out["IP"], 7.0)
-    assert math.isclose(out["ERA"], 9.0 / 7.0, rel_tol=1e-6)
-    assert math.isclose(out["WHIP"], 5.0 / 7.0, rel_tol=1e-6)
-    # PITCH_SCORE = 6*IP + 2*SO - 4*ER - 2*(H - HR) - 1*BB - 3*HR = 42 + 16 - 4 - 8 - 1 - 0 =
-    assert math.isclose(out["PITCH_SCORE"], 45.0)
+    assert math.isclose(out["ERA"], round(9.0 / 7.0, 2), rel_tol=1e-6)
+    assert math.isclose(out["WHIP"], round(5.0 / 7.0, 2), rel_tol=1e-6)
+    # Raw PITCH_SCORE = 45 -> scaled LO=-10, HI=40 => >100, clamp to 100
+    assert math.isclose(out["PITCH_SCORE"], 100.0, rel_tol=1e-6)
 
 
 # ------------------------

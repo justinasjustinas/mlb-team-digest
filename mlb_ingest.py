@@ -71,11 +71,6 @@ def is_intish(x: str) -> bool:
     except Exception:
         return False
 
-def innings_from_outs(outs: int) -> float:
-    whole = outs // 3
-    rem = outs % 3
-    return float(whole) + rem/10.0
-
 def parse_ip_to_outs(ip_val: Any) -> int:
     if ip_val is None:
         return 0
@@ -91,6 +86,13 @@ def parse_ip_to_outs(ip_val: Any) -> int:
 # ---------------
 # Derived metrics
 # ---------------
+def to_100(raw: float, lo: float, hi: float) -> float:
+    if hi <= lo:
+        return 50.0
+    x = (raw - lo) / (hi - lo) * 100.0
+    return max(0.0, min(100.0, round(x, 2)))
+
+
 def compute_batting_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     AB  = int(row.get("AB", 0) or 0)
     H   = int(row.get("H", 0) or 0)
@@ -112,12 +114,19 @@ def compute_batting_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     SLG = safe_div(TB, AB)
     OPS = OBP + SLG
 
-    BAT_SCORE = 5*HR + 3*(D2 + D3) + 2*(BB + HBP + SB) + singles + 1.5*RBI + 1.0*R
+    BAT_LO, BAT_HI = 0.0, 12.0
+
+    BAT_SCORE_RAW = 5*HR + 3*(D2 + D3) + 2*(BB + HBP + SB) + singles + 1.5*RBI + 1.0*R
+    BAT_SCORE = to_100(BAT_SCORE_RAW, BAT_LO, BAT_HI )
 
     row.update({
-        "AVG": AVG, "OBP": OBP, "SLG": SLG, "OPS": OPS,
-        "BAT_SCORE": float(BAT_SCORE),
-    })
+    "AVG": round(AVG, 3),
+    "OBP": round(OBP, 3),
+    "SLG": round(SLG, 3),
+    "OPS": round(OPS, 3),
+    "BAT_SCORE": float(BAT_SCORE),
+})
+
     return row
 
 def compute_pitching_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -129,9 +138,13 @@ def compute_pitching_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     HR = float(row.get("HR", 0) or 0)
     SO = float(row.get("SO", row.get("K", 0)) or 0)
 
-    ERA  = safe_div(ER*9.0, ip) if ip else 0.0
-    WHIP = safe_div(H + BB, ip) if ip else 0.0
-    PITCH_SCORE = 6*ip + 2*SO - 4*ER - 2*(H - HR) - 1*BB - 3*HR
+    ERA  = round(safe_div(ER*9.0, ip), 2) if ip else 0.0
+    WHIP = round(safe_div(H + BB, ip), 2) if ip else 0.0
+
+    PITCH_LO, PITCH_HI = -10.0, 40.0
+
+    PITCH_SCORE_RAW = 6*ip + 2*SO - 4*ER - 2*(H - HR) - 1*BB - 3*HR
+    PITCH_SCORE = to_100(PITCH_SCORE_RAW, PITCH_LO, PITCH_HI)
 
     row.update({
         "outs": outs,
