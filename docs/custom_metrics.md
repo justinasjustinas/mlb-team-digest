@@ -8,7 +8,7 @@ These are not official MLB statistics — they’re heuristic formulas designed 
 ## Batter Score (BAT_SCORE)
 
 ```python
-score = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
+BAT_SCORE = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
 ```
 
 **Weights**
@@ -34,22 +34,25 @@ score = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
 ## Pitcher Score (PITCH_SCORE)
 
 ```python
-score = 6*IP + 3*SO - 4*ER - 2*(H + BB) - 3*HR
+PITCH_SCORE = 6*IP + 3*SO - 4*ER - 2*(H + BB) - 3*HR
 ```
 
 **Weights**
 
 - Innings Pitched (IP): +6 per inning
-- Strikeouts (SO): +3 each
+- Strikeouts (SO): +2 each
 - Earned Runs (ER): −4 each
-- Hits + Walks (H, BB): −2 each
+- Non-HR Hits (H − HR): −2 each
+- Walks (BB): −1 each
 - Home Runs Allowed (HR): −3 each
 
 **Rationale**
 
-- Going deep into a game (IP) adds strong value.
-- Strikeouts prevent bad luck from balls in play.
-- ER, hits, walks, and HRs penalize mistakes.
+- Going deep into a game (IP) adds strong value. A starting pitcher’s job is to record as many outs as possible while keeping runs low. Every inning pitched (IP) = 3 outs recorded. If a starter throws 6, 7, or more innings, that means the bullpen (relief pitchers) doesn’t have to cover as much, which is highly valuable to the team.
+- Strikeouts prevent balls in play from turning into hits.
+- Runs allowed (ER) carry a heavy penalty since they directly cost the team.
+- Walks and non-HR hits are mildly negative, as they create baserunners.
+- Home runs receive an additional penalty beyond being counted as a hit and an earned run, since they guarantee a run and cannot be mitigated by defense.
 
 ---
 
@@ -57,6 +60,7 @@ score = 6*IP + 3*SO - 4*ER - 2*(H + BB) - 3*HR
 
 - These weights are **arbitrary** and can be tuned.
 - Future versions might explore:
-  - Using advanced metrics (WPA, OPS, FIP).
-  - Adjusting weights based on league averages.
-  - Including defensive contributions.
+  - Rethinking the philosophy in general, e.g. purely skill based OR what happened in the game (incl. luck) OR a combination of the two?
+  - Possibly shrink toward average for tiny samples (short relief stints), so one mistake doesn’t make the score whiplash.
+  - Turn it into a 0-100 SCORE.
+  - And the list goes on...
