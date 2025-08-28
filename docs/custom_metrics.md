@@ -5,10 +5,26 @@ These are not official MLB statistics — they’re heuristic formulas designed 
 
 ---
 
+## Normalizing to 0–100
+
+To make scores easy to read at a glance, we map raw scores to a 0–100 scale:
+
+# Linear min–max scaling with clamping
+
+- score_100 = max(0, min(100, 100 \* (raw - LO) / (HI - LO)))
+- Pitchers: LO = -10, HI = 40 (tuned over time).
+- Batters: LO = 0, HI = 12 (tuned over time).
+- This yields:
+  - 0–20: poor
+  - 40–60: around average
+  - 80–100: excellent single-game performance
+
+---
+
 ## Batter Score (BAT_SCORE)
 
-```python
-BAT_SCORE = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
+```
+BAT_SCORE_RAW = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
 ```
 
 **Weights**
@@ -33,8 +49,8 @@ BAT_SCORE = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
 
 ## Pitcher Score (PITCH_SCORE)
 
-```python
-PITCH_SCORE = 6*IP + 3*SO - 4*ER - 2*(H + BB) - 3*HR
+```
+PITCH_SCORE_RAW = 6*IP + 2*SO - 4*ER - 2*(H - HR) - 1*BB - 3*HR
 ```
 
 **Weights**
@@ -62,5 +78,4 @@ PITCH_SCORE = 6*IP + 3*SO - 4*ER - 2*(H + BB) - 3*HR
 - Future versions might explore:
   - Rethinking the philosophy in general, e.g. purely skill based OR what happened in the game (incl. luck) OR a combination of the two?
   - Possibly shrink toward average for tiny samples (short relief stints), so one mistake doesn’t make the score whiplash.
-  - Turn it into a 0-100 SCORE.
   - And the list goes on...
