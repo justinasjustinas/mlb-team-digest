@@ -81,7 +81,7 @@ main:
         switch:
           - condition: ${ i >= n }
             next: done_all
-          - next: per_game
+        next: per_game
 
     # ------------------ Per-game: wait -> +90m -> poll ------------------
     - per_game:
@@ -149,7 +149,7 @@ main:
         switch:
           - condition: ${ abstract == "final" or detailed == "final" }
             next: run_ingest
-          - next: not_final_yet
+        next: not_final_yet
 
     # ------------------ When FINAL: ingest -> sleep -> digest ------------------
     - run_ingest:
@@ -200,7 +200,7 @@ main:
                     - i: ${i + 1}
               - after_cap:
                   next: loop_check
-          - next: poll_status
+        next: poll_status
 
     # ------------------ Done ------------------
     - done_all:
