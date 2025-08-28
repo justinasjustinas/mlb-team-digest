@@ -173,7 +173,8 @@ main:
         assign:
           # Pull the first matching game safely
           - _matches: ${ list.filter(sched.body.dates[0].games, g, g.gamePk == game_pk) }
-          - status_game: "${ len(_matches) > 0 ? _matches[0] : null }"
+          - has_match: ${ len(_matches) > 0 }
+          - status_game: "${ has_match ? _matches[0] : null }"
           # Normalize to lowercase (fall back to empty strings if null)
           - abstract: '${ text.to_lower(string(status_game != null ? status_game.status.abstractGameState : "")) }'
           - detailed: '${ text.to_lower(string(status_game != null ? status_game.status.detailedState : "")) }'
@@ -181,11 +182,11 @@ main:
           - _matches: null
           - status_game: null
           - sched: null
-      next: final_status_check
+        next: final_status_check
 
     - final_status_check:
         switch:
-          - condition: ${ abstract == "final" || detailed == "final" }
+          - condition: '${ abstract == "final" or detailed == "final" }'
             next: run_ingest
           - next: not_final
 
