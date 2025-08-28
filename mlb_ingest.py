@@ -131,7 +131,7 @@ def compute_pitching_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
 
     ERA  = safe_div(ER*9.0, ip) if ip else 0.0
     WHIP = safe_div(H + BB, ip) if ip else 0.0
-    PITCH_SCORE = 6*ip + 3*SO - 4*ER - 2*(H + BB) - 3*HR
+    PITCH_SCORE = 6*ip + 2*SO - 4*ER - 2*(H - HR) - 1*BB - 3*HR
 
     row.update({
         "outs": outs,

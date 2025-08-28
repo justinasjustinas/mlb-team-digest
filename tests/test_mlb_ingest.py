@@ -195,8 +195,8 @@ def test_compute_pitching_metrics_simple():
     assert math.isclose(out["IP"], 7.0)
     assert math.isclose(out["ERA"], 9.0 / 7.0, rel_tol=1e-6)
     assert math.isclose(out["WHIP"], 5.0 / 7.0, rel_tol=1e-6)
-    # PITCH_SCORE = 6*ip + 3*SO - 4*ER - 2*(H+BB) - 3*HR = 42 + 24 - 4 - 10 - 0 = 52
-    assert math.isclose(out["PITCH_SCORE"], 52.0)
+    # PITCH_SCORE = 6*IP + 2*SO - 4*ER - 2*(H - HR) - 1*BB - 3*HR = 42 + 16 - 4 - 8 - 1 - 0 =
+    assert math.isclose(out["PITCH_SCORE"], 45.0)
 
 
 # ------------------------
