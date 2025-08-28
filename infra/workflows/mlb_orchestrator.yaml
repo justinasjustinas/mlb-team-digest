@@ -128,21 +128,40 @@ main:
                     - _games: ${sched_poll.body.dates[0].games}
     - match_and_fill_status:
         assign:
-          - _matches: ${ list.filter(_games, gg, gg.gamePk == game_pk) }
-    - if_match_fill_fields:
+          - found: false
+          - j: 0
+          - m: ${ len(_games) }
+    - find_match_guard:
         switch:
-          - condition: ${ len(_matches) > 0 }
+          - condition: ${ j >= m }
+            next: free_poll_payloads
+        next: check_candidate
+    - check_candidate:
+        assign:
+          - gg: ${ _games[j] }
+    - maybe_take:
+        switch:
+          - condition: ${ gg.gamePk == game_pk }
             steps:
               - set_fields:
                   assign:
-                    - _g: ${_matches[0]}
-                    - abstract: ${ text.to_lower(string(_g.status.abstractGameState)) }
-                    - detailed: ${ text.to_lower(string(_g.status.detailedState)) }
-                    - _g: null
+                    - abstract: ${ text.to_lower(string(gg.status.abstractGameState)) }
+                    - detailed: ${ text.to_lower(string(gg.status.detailedState)) }
+                    - found: true
+        next: advance_loop
+    - advance_loop:
+        assign:
+          - j: ${ j + 1 }
+          - gg: null
+        next: stop_if_found
+    - stop_if_found:
+        switch:
+          - condition: ${ found }
+            next: free_poll_payloads
+        next: find_match_guard
     - free_poll_payloads:
         assign:
           - _games: null
-          - _matches: null
           - sched_poll: null
 
     - final_status_check:
@@ -151,7 +170,7 @@ main:
             next: run_ingest
         next: not_final_yet
 
-    # ------------------ When FINAL: ingest -> sleep -> digest ------------------
+    # ------------------ When FINAL: ingest -> sleep -> digest -> finish ------------------
     - run_ingest:
         call: googleapis.run.v2.projects.locations.jobs.run
         args:
