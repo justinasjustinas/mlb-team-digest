@@ -154,8 +154,7 @@ main:
 
     # ------------------------------------------------------------
     # Poll loop:
-    #   - Fetch the live feed (large JSON), immediately extract tiny status fields,
-    #     then null out the big payload to stay under memory limits.
+    #   - Re-fetch the schedule for this specific game and extract status fields.
     #   - We check both abstractGameState and detailedState for robustness.
     #   - If FINAL, trigger ingest and digest, then proceed to next game.
     #   - Else, sleep 15 min and retry until cap.
@@ -163,16 +162,22 @@ main:
     - poll_status:
         call: http.get
         args:
-          url: ${"https://statsapi.mlb.com/api/v1.1/game/" + string(game_pk) + "/feed/live"}
-        result: feed
+          url: https://statsapi.mlb.com/api/v1/schedule
+          query:
+            sportId: "1"
+            teamId: ${string(team_id)}
+            date: ${date_str}
+        result: sched
 
     - extract_status:
         assign:
+          - status_game: ${list.filter(sched.body.dates[0].games, g, g.gamePk == game_pk)[0]}
           # Normalize to lowercase to avoid casing edge-cases!
-          - abstract: ${ text.to_lower(string(feed.body.gameData.status.abstractGameState)) }
-          - detailed: ${ text.to_lower(string(feed.body.gameData.status.detailedState)) }
-          # CRITICAL: free the huge live feed immediately after extracting status fields
-          - feed: null
+          - abstract: ${ text.to_lower(string(status_game.status.abstractGameState)) }
+          - detailed: ${ text.to_lower(string(status_game.status.detailedState)) }
+          # Free the schedule payload after extracting status fields.
+          - status_game: null
+          - sched: null
 
     - final_check_abstract:
         switch:
