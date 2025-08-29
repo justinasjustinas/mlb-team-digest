@@ -44,44 +44,76 @@ Cloud Scheduler triggers the Workflow on a schedule:
 
 ## 2) Service accounts (who runs what)
 
-| Service Account | Purpose                                  | Used by / Attached to                            |
-| --------------- | ---------------------------------------- | ------------------------------------------------ |
-| CI SA           | CI identity for GitHub Actions via WIF   | GitHub Actions (build, rollout, deploy workflow) |
-| Workflow SA     | Runtime identity for Cloud Workflow      | Workflow `mlb-orchestrator`                      |
-| Ingest Job SA   | Runtime identity for job writing to BQ   | Cloud Run Job `mlb-ingest`                       |
-| Digest Job SA   | Runtime identity for job reading from BQ | Cloud Run Job `mlb-digest`                       |
+| Service Account   | Purpose                                                    | Used by / Attached to                             |
+| ----------------- | ---------------------------------------------------------- | ------------------------------------------------- |
+| **CI SA**         | Federated identity for CI via WIF; builds, pushes, deploys | GitHub Actions workflows (build, rollout, deploy) |
+| **Workflow SA**   | Runtime identity for Cloud Workflow                        | Workflow `mlb-orchestrator`                       |
+| **Ingest Job SA** | Runtime identity for job writing to BQ                     | Cloud Run Job `mlb-ingest`                        |
+| **Digest Job SA** | Runtime identity for job reading from BQ                   | Cloud Run Job `mlb-digest`                        |
+| **Runner Job SA** | Shared runtime SA if jobs are deployed with a common SA    | Cloud Run Jobs (as configured)                    |
+| **Scheduler SA**  | Identity for Cloud Scheduler                               | Cloud Scheduler trigger                           |
 
 ---
 
-## 3) IAM matrix (least‑privilege)
+## 3) IAM matrix (least-privilege)
 
-### 3.1 Project‑level roles
+### 3.1 Project-level roles
 
-| Principal   | Roles                                                                       | Why                                        |
-| ----------- | --------------------------------------------------------------------------- | ------------------------------------------ |
-| CI SA       | `roles/artifactregistry.writer`, `roles/run.admin`, `roles/workflows.admin` | Push images, update jobs, deploy workflows |
-| Workflow SA | `roles/run.invoker` (+ optional `roles/logging.logWriter`)                  | Run jobs from Workflow                     |
+| Principal   | Roles                                              | Why                                            |
+| ----------- | -------------------------------------------------- | ---------------------------------------------- |
+| CI SA       | `roles/run.admin`, `roles/workflows.admin`         | Update Cloud Run jobs, deploy/update Workflows |
+|             | `roles/artifactregistry.writer` _(scoped to repo)_ | Push images to Artifact Registry               |
+| Workflow SA | _(optional)_ `roles/logging.logWriter`             | Allow Workflow to write logs                   |
 
-### 3.2 Per‑resource roles
+---
 
-| Target              | Member       | Role                           | Why                                          |
-| ------------------- | ------------ | ------------------------------ | -------------------------------------------- |
-| Workflow SA         | CI SA        | `roles/iam.serviceAccountUser` | CI can set runtime SA during workflow deploy |
-| Ingest Job SA       | CI SA        | `roles/iam.serviceAccountUser` | CI can update job using this SA              |
-| Digest Job SA       | CI SA        | `roles/iam.serviceAccountUser` | CI can update job using this SA              |
-| Workflow (resource) | Scheduler SA | `roles/workflows.invoker`      | Scheduler can trigger Workflow               |
+### 3.2 Per-resource roles
 
-### 3.3 BigQuery dataset‑level IAM
+| Target / Resource           | Member       | Role                                                              | Why                                                                   |
+| --------------------------- | ------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Workflow resource           | Scheduler SA | `roles/workflows.invoker`                                         | Scheduler can trigger the workflow                                    |
+| Cloud Run Job `mlb-ingest`  | Workflow SA  | `roles/runJobRunnerWithOverrides` _(custom role)_                 | Workflow calls `jobs.run` **with overrides**                          |
+| Cloud Run Job `mlb-digest`  | Workflow SA  | `roles/runJobRunnerWithOverrides` _(custom role)_                 | Same as above                                                         |
+| Job Runtime SAs             | CI SA        | `roles/iam.serviceAccountUser`                                    | CI can deploy/update jobs using these runtime SAs                     |
+| Workflow SA                 | CI SA        | `roles/iam.serviceAccountUser`                                    | CI can set Workflow’s runtime SA during deploy                        |
+| Job Runtime SA _(optional)_ | Workflow SA  | `roles/iam.serviceAccountUser` _(only if overridden at run time)_ | Needed only if workflow overrides the job’s runtime SA in run request |
+| Artifact Registry repo      | CI SA        | `roles/artifactregistry.writer` _(scoped to repo)_                | Push images from CI                                                   |
 
-| Dataset | Member        | Role                        |
-| ------- | ------------- | --------------------------- |
-| `mlb`   | Ingest Job SA | `roles/bigquery.dataEditor` |
-| `mlb`   | Digest Job SA | `roles/bigquery.dataViewer` |
+> Instead of `roles/run.admin`, we defined a custom role `runJobRunnerWithOverrides` for the Workflow SA with only:
+>
+> - `run.jobs.get`
+> - `run.jobs.run`
+> - `run.jobs.runWithOverrides`
+> - `run.executions.get`
+> - `run.executions.list`
+
+---
+
+### 3.3 BigQuery dataset-level IAM
+
+| Dataset | Member        | Role                        | Why                           |
+| ------- | ------------- | --------------------------- | ----------------------------- |
+| `mlb`   | Ingest Job SA | `roles/bigquery.dataEditor` | Write game data               |
+| `mlb`   | Digest Job SA | `roles/bigquery.dataViewer` | Read data to assemble digests |
+
+---
 
 ### 3.4 Workload Identity Federation (for GitHub)
 
 - **Provider (WIF_PROVIDER)**: workload identity provider configured for GitHub repo
 - **Trust binding on CI SA**: `roles/iam.workloadIdentityUser` with principalSet filter for repo
+
+```bash
+PROJECT_NUMBER="<your-project-number>"
+POOL_ID="<your-pool>"
+PROVIDER_ID="<your-provider>"
+REPO="<owner>/<repo>"   # e.g. justinas/mlb-team-digest
+
+gcloud iam service-accounts add-iam-policy-binding \
+  CI-SA \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO}"
+
 
 ---
 
@@ -143,35 +175,37 @@ Cloud Scheduler triggers the Workflow on a schedule:
 ## 8) Permissions matrix (visual)
 
 ```
+
 [ GitHub Actions CI SA ]
-   | artifactregistry.writer
-   | run.admin
-   | workflows.admin
-   | iam.serviceAccountUser on ---> [ Workflow SA ]
-   | iam.serviceAccountUser on ---> [ Ingest Job SA ]
-   | iam.serviceAccountUser on ---> [ Digest Job SA ]
-   |
-   +--> builds/pushes images ---> [ Artifact Registry ]
-   +--> updates ---> [ Cloud Run Jobs ] (mlb-ingest, mlb-digest)
-   +--> deploys ---> [ Cloud Workflow ] (mlb-orchestrator)
+| artifactregistry.writer
+| run.admin
+| workflows.admin
+| iam.serviceAccountUser on ---> [ Workflow SA ]
+| iam.serviceAccountUser on ---> [ Ingest Job SA ]
+| iam.serviceAccountUser on ---> [ Digest Job SA ]
+|
++--> builds/pushes images ---> [ Artifact Registry ]
++--> updates ---> [ Cloud Run Jobs ] (mlb-ingest, mlb-digest)
++--> deploys ---> [ Cloud Workflow ] (mlb-orchestrator)
 
 [ Workflow SA ]
-   | run.invoker
-   | (logging.logWriter optional)
-   +--> runs jobs ---> [ Cloud Run Jobs ]
-                          | service account = Ingest Job SA / Digest Job SA
+| run.invoker
+| (logging.logWriter optional)
++--> runs jobs ---> [ Cloud Run Jobs ]
+| service account = Ingest Job SA / Digest Job SA
 
 [ Ingest Job SA ]
-   | bigquery.dataEditor on dataset mlb
-   +--> writes ---> [ BigQuery dataset: mlb ]
+| bigquery.dataEditor on dataset mlb
++--> writes ---> [ BigQuery dataset: mlb ]
 
 [ Digest Job SA ]
-   | bigquery.dataViewer on dataset mlb
-   +--> reads ---> [ BigQuery dataset: mlb ]
+| bigquery.dataViewer on dataset mlb
++--> reads ---> [ BigQuery dataset: mlb ]
 
 [ Cloud Scheduler SA ] (if used)
-   | workflows.invoker
-   +--> triggers ---> [ Cloud Workflow ]
+| workflows.invoker
++--> triggers ---> [ Cloud Workflow ]
+
 ```
 
 ---
@@ -181,3 +215,4 @@ Cloud Scheduler triggers the Workflow on a schedule:
 - The **mlb-orchestrator** workflow is triggered automatically via **Cloud Scheduler**.
 - **Cron:** `0 8 * * *` (08:00 AM daily, America/New_York)
 - **Region:** `europe-west1`
+```
