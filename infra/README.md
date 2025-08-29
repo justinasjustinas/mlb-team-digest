@@ -86,6 +86,8 @@ Cloud Scheduler triggers the Workflow on a schedule:
 > - `run.jobs.runWithOverrides`
 > - `run.executions.get`
 > - `run.executions.list`
+> - `run.operations.get`
+> - `run.operations.list`
 
 ---
 
@@ -177,7 +179,7 @@ gcloud iam service-accounts add-iam-policy-binding \
 ```
 
 [ GitHub Actions CI SA ]
-| artifactregistry.writer
+| artifactregistry.writer (repo-scoped)
 | run.admin
 | workflows.admin
 | iam.serviceAccountUser on ---> [ Workflow SA ]
@@ -185,26 +187,33 @@ gcloud iam service-accounts add-iam-policy-binding \
 | iam.serviceAccountUser on ---> [ Digest Job SA ]
 |
 +--> builds/pushes images ---> [ Artifact Registry ]
-+--> updates ---> [ Cloud Run Jobs ] (mlb-ingest, mlb-digest)
-+--> deploys ---> [ Cloud Workflow ] (mlb-orchestrator)
++--> updates/deploys -------> [ Cloud Run Jobs ] (mlb-ingest, mlb-digest)
++--> deploys/updates -------> [ Cloud Workflow ] (mlb-orchestrator)
 
 [ Workflow SA ]
-| run.invoker
-| (logging.logWriter optional)
-+--> runs jobs ---> [ Cloud Run Jobs ]
-| service account = Ingest Job SA / Digest Job SA
+| (optional) logging.logWriter
+| roles/runJobRunnerWithOverrides on:
+| - Cloud Run Job: mlb-ingest
+| - Cloud Run Job: mlb-digest
+| (custom role includes: run.jobs.get, run.jobs.run, run.jobs.runWithOverrides,
+| run.executions.get, run.executions.list,
+| run.operations.get [ + optional run.operations.list ])
+|
++--> runs jobs (with overrides) ---> [ Cloud Run Jobs ]
+| (only if overriding runtime SA:)
+| iam.serviceAccountUser on -------> [ Ingest/Digest Job Runtime SA ]
 
 [ Ingest Job SA ]
-| bigquery.dataEditor on dataset mlb
-+--> writes ---> [ BigQuery dataset: mlb ]
+| bigquery.dataEditor on dataset: mlb
++--> writes -----------------------> [ BigQuery dataset: mlb ]
 
 [ Digest Job SA ]
-| bigquery.dataViewer on dataset mlb
-+--> reads ---> [ BigQuery dataset: mlb ]
+| bigquery.dataViewer on dataset: mlb
++--> reads ------------------------> [ BigQuery dataset: mlb ]
 
 [ Cloud Scheduler SA ] (if used)
 | workflows.invoker
-+--> triggers ---> [ Cloud Workflow ]
++--> triggers ---------------------> [ Cloud Workflow ]
 
 ```
 
