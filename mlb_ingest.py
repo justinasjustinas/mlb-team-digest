@@ -120,12 +120,12 @@ def compute_batting_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     BAT_SCORE = to_100(BAT_SCORE_RAW, BAT_LO, BAT_HI )
 
     row.update({
-    "AVG": round(AVG, 3),
-    "OBP": round(OBP, 3),
-    "SLG": round(SLG, 3),
-    "OPS": round(OPS, 3),
-    "BAT_SCORE": float(BAT_SCORE),
-})
+        "AVG": round(AVG, 3),
+        "OBP": round(OBP, 3),
+        "SLG": round(SLG, 3),
+        "OPS": round(OPS, 3),
+        "BAT_SCORE": float(BAT_SCORE),
+    })
 
     return row
 
@@ -309,13 +309,33 @@ def bq_client_or_none(project: str):
         return None
 
 def bq_ensure_dataset(client, dataset_id: str, location: str) -> None:
+    """
+    Idempotently ensure the dataset exists and matches the expected location.
+    Tolerates concurrent creators; raises with a clear message on location mismatch.
+    """
     from google.cloud import bigquery  # type: ignore
+    from google.api_core.exceptions import NotFound, Conflict  # type: ignore
+
     ds_ref = bigquery.Dataset(f"{client.project}.{dataset_id}")
+
     try:
-        client.get_dataset(ds_ref)
-    except Exception:
+        ds = client.get_dataset(ds_ref)  # dataset exists
+    except NotFound:
+        # Create if missing (idempotent + race-safe)
         ds_ref.location = location
-        client.create_dataset(ds_ref)
+        try:
+            # If your bigquery lib is recent, you could do: client.create_dataset(ds_ref, exists_ok=True)
+            client.create_dataset(ds_ref)
+            return
+        except Conflict:
+            # Created by a race; fall through to fetch & validate
+            ds = client.get_dataset(ds_ref)
+    # At this point, dataset definitely exists -> validate location
+    if ds.location != location:
+        raise RuntimeError(
+            f"BigQuery dataset '{dataset_id}' exists in location {ds.location}, "
+            f"but job expects {location}. Update BQ_LOCATION or recreate the dataset."
+        )
 
 def bq_write_rows(client, table_fqn: str, rows: List[Dict[str, Any]]) -> None:
     if not rows:
@@ -396,7 +416,9 @@ def main() -> int:
         log("BigQuery client unavailable; set GOOGLE_CLOUD_PROJECT/BQ_PROJECT or use --output json.")
         return 2
 
+    # Ensure dataset exists and matches expected location before loading rows
     bq_ensure_dataset(client, args.bq_dataset, BQ_LOCATION)
+
     bq_write_rows(client, f"{args.bq_project}.{args.bq_dataset}.game_summaries", summaries)
     bq_write_rows(client, f"{args.bq_project}.{args.bq_dataset}.game_linescore", lines_all)
     bq_write_rows(client, f"{args.bq_project}.{args.bq_dataset}.game_boxscore_players", players_all)
