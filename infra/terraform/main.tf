@@ -55,13 +55,26 @@ resource "google_bigquery_dataset" "mlb" {
   location                   = var.bq_location
   description                = "MLB ingest dataset"
   delete_contents_on_destroy = false
-  depends_on                 = [google_project_service.apis]
+  access {
+    iam_member = "serviceAccount:${google_service_account.ingest.email}"
+    role       = "roles/bigquery.dataEditor"
+  }
+  access {
+    iam_member = "serviceAccount:${google_service_account.digest.email}"
+    role       = "roles/bigquery.dataViewer"
+  }
+  depends_on = [google_project_service.apis]
 }
 
 # Service Accounts
-resource "google_service_account" "runner" {
-  account_id   = "mlb-runner-sa"
-  display_name = "MLB Cloud Run Job SA"
+resource "google_service_account" "ingest" {
+  account_id   = "mlb-ingest-sa"
+  display_name = "Ingest Job SA"
+}
+
+resource "google_service_account" "digest" {
+  account_id   = "mlb-digest-sa"
+  display_name = "Digest Job SA"
 }
 
 resource "google_service_account" "wf" {
@@ -74,21 +87,31 @@ resource "google_service_account" "scheduler" {
   display_name = "Scheduler SA"
 }
 
-# IAM for runner SA (pull image + write/query BQ)
-resource "google_project_iam_member" "runner_ar_reader" {
+resource "google_service_account" "ci" {
+  account_id   = "mlb-ci-sa"
+  display_name = "CI Service Account"
+}
+
+# IAM for job runtime SAs
+resource "google_project_iam_member" "ingest_ar_reader" {
   project = var.project_id
   role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.runner.email}"
+  member  = "serviceAccount:${google_service_account.ingest.email}"
 }
-resource "google_project_iam_member" "runner_bq_jobuser" {
+resource "google_project_iam_member" "ingest_bq_jobuser" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"
-  member  = "serviceAccount:${google_service_account.runner.email}"
+  member  = "serviceAccount:${google_service_account.ingest.email}"
 }
-resource "google_project_iam_member" "runner_bq_dataeditor" {
+resource "google_project_iam_member" "digest_ar_reader" {
   project = var.project_id
-  role    = "roles/bigquery.dataEditor"
-  member  = "serviceAccount:${google_service_account.runner.email}"
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.digest.email}"
+}
+resource "google_project_iam_member" "digest_bq_jobuser" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.digest.email}"
 }
 
 resource "google_workflows_workflow" "orchestrator" {
@@ -106,9 +129,24 @@ resource "google_workflows_workflow" "orchestrator" {
 
 
 # IAM for Workflows SA (run Cloud Run) + logs
-resource "google_project_iam_member" "wf_run_admin" {
+resource "google_project_iam_custom_role" "run_job_runner_with_overrides" {
+  role_id     = "runJobRunnerWithOverrides"
+  title       = "Run Job Runner With Overrides"
+  description = "Minimal permissions to run Cloud Run jobs with overrides"
+  permissions = [
+    "run.jobs.get",
+    "run.jobs.run",
+    "run.jobs.runWithOverrides",
+    "run.executions.get",
+    "run.executions.list",
+    "run.operations.get",
+    "run.operations.list",
+  ]
+}
+
+resource "google_project_iam_member" "wf_run_job_runner" {
   project = var.project_id
-  role    = "roles/run.admin"
+  role    = google_project_iam_custom_role.run_job_runner_with_overrides.name
   member  = "serviceAccount:${google_service_account.wf.email}"
 }
 resource "google_project_iam_member" "wf_logs" {
@@ -124,6 +162,78 @@ resource "google_project_iam_member" "scheduler_workflows_invoker" {
   member  = "serviceAccount:${google_service_account.scheduler.email}"
 }
 
+resource "google_service_account_iam_member" "scheduler_token_creator" {
+  service_account_id = google_service_account.scheduler.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+}
+
+# CI service account roles
+resource "google_project_iam_member" "ci_run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.ci.email}"
+}
+
+resource "google_project_iam_member" "ci_workflows_admin" {
+  project = var.project_id
+  role    = "roles/workflows.admin"
+  member  = "serviceAccount:${google_service_account.ci.email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "ci_writer" {
+  location   = var.region
+  repository = google_artifact_registry_repository.repo.repository_id
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.ci.email}"
+}
+
+# CI can impersonate runtime service accounts
+resource "google_service_account_iam_member" "ci_wf_sa_user" {
+  service_account_id = google_service_account.wf.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.ci.email}"
+}
+
+resource "google_service_account_iam_member" "ci_ingest_sa_user" {
+  service_account_id = google_service_account.ingest.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.ci.email}"
+}
+
+resource "google_service_account_iam_member" "ci_digest_sa_user" {
+  service_account_id = google_service_account.digest.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.ci.email}"
+}
+
+# Workload Identity Federation for GitHub
+resource "google_iam_workload_identity_pool" "ci_pool" {
+  provider                  = google-beta
+  workload_identity_pool_id = var.wif_pool_id
+  display_name              = "CI Pool"
+}
+
+resource "google_iam_workload_identity_pool_provider" "github" {
+  provider                         = google-beta
+  workload_identity_pool_id        = google_iam_workload_identity_pool.ci_pool.workload_identity_pool_id
+  workload_identity_pool_provider_id = var.wif_provider_id
+  display_name                     = "GitHub Provider"
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+  attribute_mapping = {
+    "google.subject"      = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+  }
+}
+
+resource "google_service_account_iam_member" "ci_wif_binding" {
+  service_account_id = google_service_account.ci.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${google_iam_workload_identity_pool.ci_pool.workload_identity_pool_id}/attribute.repository/${var.github_repository}"
+}
+
 # Single image used by both jobs
 locals {
   image_uri = "${var.region}-docker.pkg.dev/${var.project_id}/${var.repo_name}/${var.image_name}"
@@ -137,7 +247,7 @@ resource "google_cloud_run_v2_job" "ingest" {
 
   template {
     template {
-      service_account = google_service_account.runner.email
+      service_account = google_service_account.ingest.email
 
       containers {
         image = local.image_uri
@@ -168,7 +278,7 @@ resource "google_cloud_run_v2_job" "digest" {
 
   template {
     template {
-      service_account = google_service_account.runner.email
+      service_account = google_service_account.digest.email
 
       containers {
         image   = local.image_uri

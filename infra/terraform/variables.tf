@@ -47,3 +47,20 @@ variable "scheduler_tz" {
   type    = string
   default = "America/New_York"
 }
+
+# Workload Identity Federation
+variable "wif_pool_id" {
+  type    = string
+  default = "mlb-ci-pool"
+}
+
+variable "wif_provider_id" {
+  type    = string
+  default = "mlb-github"
+}
+
+variable "github_repository" {
+  type        = string
+  description = "GitHub repository in owner/name format for OIDC trust"
+  default     = "OWNER/REPO"
+}
