@@ -63,7 +63,7 @@ Cloud Scheduler triggers the Workflow on a schedule:
 | ----------- | -------------------------------------------------- | ---------------------------------------------- |
 | CI SA       | `roles/run.admin`, `roles/workflows.admin`         | Update Cloud Run jobs, deploy/update Workflows |
 |             | `roles/artifactregistry.writer` _(scoped to repo)_ | Push images to Artifact Registry               |
-| Workflow SA | _(optional)_ `roles/logging.logWriter`             | Allow Workflow to write logs                   |
+| Workflow SA | `roles/run.viewer`, _(optional)_ `roles/logging.logWriter` | View Cloud Run jobs; allow Workflow to write logs |
 
 ---
 

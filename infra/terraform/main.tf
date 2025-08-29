@@ -149,6 +149,11 @@ resource "google_project_iam_member" "wf_run_job_runner" {
   role    = google_project_iam_custom_role.run_job_runner_with_overrides.name
   member  = "serviceAccount:${google_service_account.wf.email}"
 }
+resource "google_project_iam_member" "wf_run_viewer" {
+  project = var.project_id
+  role    = "roles/run.viewer"
+  member  = "serviceAccount:${google_service_account.wf.email}"
+}
 resource "google_project_iam_member" "wf_logs" {
   project = var.project_id
   role    = "roles/logging.logWriter"
