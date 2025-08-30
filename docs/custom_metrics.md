@@ -24,7 +24,7 @@ To make scores easy to read at a glance, we map raw scores to a 0–100 scale:
 ## Batter Score (BAT_SCORE)
 
 ```
-BAT_SCORE_RAW = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1.0*R
+BAT_SCORE_RAW = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 2*RBI + 1.0*R
 ```
 
 **Weights**
@@ -33,7 +33,7 @@ BAT_SCORE_RAW = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1
 - Double (2B) or Triple (3B): 3 points
 - Walk (BB), Hit By Pitch (HBP), Stolen Base (SB): 2 points
 - Single: 1 point
-- Run Batted In (RBI): 1.5 points
+- Run Batted In (RBI): 2 points
 - Run Scored (R): 1 point
 
 **Rationale**
@@ -41,7 +41,7 @@ BAT_SCORE_RAW = 5*HR + 3*(2B + 3B) + 2*(BB + HBP + SB) + 1*singles + 1.5*RBI + 1
 - HRs are the most impactful single event → highest weight.
 - Extra-base hits (2B, 3B) show power.
 - Walks/HBP show discipline, SB adds value on the bases.
-- RBIs reflect run production.
+- RBIs reflect run production; higher weight rewards clutch scoring.
 - Runs scored capture direct contribution.
 - Singles are useful but less powerful.
 

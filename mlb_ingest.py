@@ -116,7 +116,7 @@ def compute_batting_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
 
     BAT_LO, BAT_HI = 0.0, 12.0
 
-    BAT_SCORE_RAW = 5*HR + 3*(D2 + D3) + 2*(BB + HBP + SB) + singles + 1.5*RBI + 1.0*R
+    BAT_SCORE_RAW = 5*HR + 3*(D2 + D3) + 2*(BB + HBP + SB) + singles + 2.0*RBI + 1.0*R
     BAT_SCORE = to_100(BAT_SCORE_RAW, BAT_LO, BAT_HI )
 
     row.update({

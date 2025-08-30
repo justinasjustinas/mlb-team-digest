@@ -173,8 +173,8 @@ def test_compute_batting_metrics_simple():
     assert math.isclose(out["OBP"], 0.5)
     assert math.isclose(out["SLG"], 0.75)
     assert math.isclose(out["OPS"], 1.25)
-    # BAT_SCORE_RAW = 6.5 -> scaled 0..100 with LO=0, HI=12 => 54.17
-    assert math.isclose(out["BAT_SCORE"], 54.17, rel_tol=1e-3)
+    # BAT_SCORE_RAW = 7.0 -> scaled 0..100 with LO=0, HI=12 => 58.33
+    assert math.isclose(out["BAT_SCORE"], 58.33, rel_tol=1e-3)
 
 
 def test_compute_pitching_metrics_simple():
