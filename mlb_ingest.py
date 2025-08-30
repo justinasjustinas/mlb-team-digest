@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from custom_metrics import compute_batting_metrics, compute_pitching_metrics, parse_ip_to_outs
+
 BASEBALL_TZ   = os.getenv("BASEBALL_TZ", "America/New_York")
 BQ_PROJECT    = os.getenv("BQ_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
 BQ_DATASET    = os.getenv("BQ_DATASET", "mlb")
@@ -52,9 +54,6 @@ def default_output_mode() -> str:
 def log(msg: str) -> None:
     print(msg, flush=True)
 
-def safe_div(n: float, d: float) -> float:
-    return float(n)/float(d) if d else 0.0
-
 def parse_date(date_str: Optional[str]) -> dt.date:
     if date_str:
         return dt.datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -70,89 +69,6 @@ def is_intish(x: str) -> bool:
         int(x); return True
     except Exception:
         return False
-
-def parse_ip_to_outs(ip_val: Any) -> int:
-    if ip_val is None:
-        return 0
-    if isinstance(ip_val, int):
-        return ip_val if ip_val >= 3 else ip_val*3
-    try:
-        f = float(ip_val)
-        whole = int(f); dec = round((f - whole)*10)
-        return whole*3 + min(max(dec,0),2)
-    except Exception:
-        return 0
-
-# ---------------
-# Derived metrics
-# ---------------
-def to_100(raw: float, lo: float, hi: float) -> float:
-    if hi <= lo:
-        return 50.0
-    x = (raw - lo) / (hi - lo) * 100.0
-    return max(0.0, min(100.0, round(x, 2)))
-
-
-def compute_batting_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
-    AB  = int(row.get("AB", 0) or 0)
-    H   = int(row.get("H", 0) or 0)
-    BB  = int(row.get("BB", 0) or 0)
-    HBP = int(row.get("HBP", 0) or 0)
-    SF  = int(row.get("SF", 0) or 0)
-    HR  = int(row.get("HR", 0) or 0)
-    D2  = int(row.get("doubles", row.get("2B", row.get("Doubles", 0))) or 0)
-    D3  = int(row.get("triples", row.get("3B", row.get("Triples", 0))) or 0)
-    R   = int(row.get("R", 0) or 0)
-    RBI = int(row.get("RBI", 0) or 0)
-    SB  = int(row.get("SB", 0) or 0)
-
-    singles = max(H - D2 - D3 - HR, 0)
-    TB = singles + 2*D2 + 3*D3 + 4*HR
-
-    AVG = safe_div(H, AB)
-    OBP = safe_div(H + BB + HBP, AB + BB + HBP + SF)
-    SLG = safe_div(TB, AB)
-    OPS = OBP + SLG
-
-    BAT_LO, BAT_HI = 0.0, 12.0
-
-    BAT_SCORE_RAW = 5*HR + 3*(D2 + D3) + 2*(BB + HBP + SB) + singles + 2.0*RBI + 1.0*R
-    BAT_SCORE = to_100(BAT_SCORE_RAW, BAT_LO, BAT_HI )
-
-    row.update({
-        "AVG": round(AVG, 3),
-        "OBP": round(OBP, 3),
-        "SLG": round(SLG, 3),
-        "OPS": round(OPS, 3),
-        "BAT_SCORE": float(BAT_SCORE),
-    })
-
-    return row
-
-def compute_pitching_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
-    outs = int(row.get("outs") or parse_ip_to_outs(row.get("IP")))
-    ip   = outs/3.0
-    ER = float(row.get("ER", 0) or 0)
-    H  = float(row.get("H", 0) or 0)
-    BB = float(row.get("BB", 0) or 0)
-    HR = float(row.get("HR", 0) or 0)
-    SO = float(row.get("SO", row.get("K", 0)) or 0)
-
-    ERA  = round(safe_div(ER*9.0, ip), 2) if ip else 0.0
-    WHIP = round(safe_div(H + BB, ip), 2) if ip else 0.0
-
-    PITCH_LO, PITCH_HI = -10.0, 40.0
-
-    PITCH_SCORE_RAW = 6*ip + 2*SO - 4*ER - 2*(H - HR) - 1*BB - 3*HR
-    PITCH_SCORE = to_100(PITCH_SCORE_RAW, PITCH_LO, PITCH_HI)
-
-    row.update({
-        "outs": outs,
-        "IP": ip,  # convenience
-        "ERA": ERA, "WHIP": WHIP, "SO": SO,
-        "PITCH_SCORE": float(PITCH_SCORE),
-    })
-    return row
 
 # ---------------
 # MLB API
