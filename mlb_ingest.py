@@ -27,7 +27,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-import requests  # pip install requests
+import requests
 
 BASEBALL_TZ   = os.getenv("BASEBALL_TZ", "America/New_York")
 BQ_PROJECT    = os.getenv("BQ_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
@@ -162,21 +162,45 @@ def http_get_json(url: str, params: Dict[str, Any] | None = None, timeout: int =
     r.raise_for_status()
     return r.json()
 
+def is_finalish(g: dict) -> bool:
+    st = (g.get("status") or {})
+    # Most reliable: single-letter code — F == Final
+    if str(st.get("codedGameState", "")).upper() == "F":
+        return True
+    # Conservative fallback if code is missing
+    detailed = str(st.get("detailedState", "")).strip().lower()
+    return detailed in {
+        "final",
+        "game over",
+        "completed early",
+        "completed early: rain",
+        "final: suspended",
+    }
+
 def find_final_games_for_team(date_iso: str, team: str) -> List[Dict[str, Any]]:
-    sched = http_get_json(f"{API}/schedule", {"date": date_iso, "sportId": 1})
-    games = []
-    for d in sched.get("dates", []):
-        for g in d.get("games", []):
-            st = (g.get("status", {}) or {}).get("detailedState", "")
-            if str(st).lower() != "final":
+    # If team looks like an ID, we can ask the API to prefilter.
+    params = {"date": date_iso, "sportId": 1}
+    if is_intish(team):
+        params["teamId"] = str(team)
+
+    sched = http_get_json(f"{API}/schedule", params)
+    games: List[Dict[str, Any]] = []
+
+    for d in sched.get("dates", []) or []:
+        for g in d.get("games", []) or []:
+            if not is_finalish(g):
                 continue
-            home = g.get("teams", {}).get("home", {}).get("team", {}) or {}
-            away = g.get("teams", {}).get("away", {}).get("team", {}) or {}
+
+            home = (g.get("teams", {}) or {}).get("home", {}).get("team", {}) or {}
+            away = (g.get("teams", {}) or {}).get("away", {}).get("team", {}) or {}
+
             if is_intish(team):
                 if str(home.get("id")) == team or str(away.get("id")) == team:
                     games.append(g)
             else:
-                if str(home.get("name", "")).lower() == team.lower() or str(away.get("name", "")).lower() == team.lower():
+                home_name = str(home.get("name", "")).lower()
+                away_name = str(away.get("name", "")).lower()
+                if home_name == team.lower() or away_name == team.lower():
                     games.append(g)
     return games
 

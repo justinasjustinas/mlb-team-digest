@@ -23,9 +23,13 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: "latest"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -33,37 +37,40 @@ jobs:
           workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.SERVICE_ACCOUNT_EMAIL }}
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-
-      - name: Validate Workflows (gcloud --validate-only)
+      - name: Validate Workflows (deploy to temp, then delete)
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob globstar
           EXIT=0
+
           for GLOB in $WORKFLOW_GLOBS; do
             for FILE in $GLOB; do
               echo "::group::Validating $FILE"
-              NAME="syntax-check-$(echo "$FILE" | tr '/.' '--')"
-              gcloud workflows deploy "$NAME" \
-                --source="$FILE" \
-                --location="$REGION" \
-                --validate-only \
-                --quiet
-              RC=$?
-              echo "::endgroup::"
-              if [ $RC -ne 0 ]; then
-                echo "❌ Validation failed for $FILE"
-                EXIT=1
-              else
+              TMP="tmp-validate-$(echo "$FILE" | tr '/.' '--')"
+
+              if gcloud workflows deploy "$TMP" \
+                    --source="$FILE" \
+                    --location="$REGION" \
+                    --project="$PROJECT_ID" \
+                    --quiet; then
                 echo "✅ $FILE is valid"
+                gcloud workflows delete "$TMP" \
+                  --location="$REGION" \
+                  --project="$PROJECT_ID" \
+                  --quiet || echo "⚠️  Could not delete $TMP (will expire per retention)."
+              else
+                echo "❌ Validation (deploy) failed for $FILE"
+                EXIT=1
               fi
+              echo "::endgroup::"
             done
           done
-          if [ $EXIT -ne 0 ]; then
+
+          if [ "$EXIT" -ne 0 ]; then
             echo "One or more workflow files failed validation."
-            exit $EXIT
+            exit "$EXIT"
           fi
+
+      - name: Echo done # <— new step must start here, not inside the run: block
+        run: echo "All workflow files validated."
