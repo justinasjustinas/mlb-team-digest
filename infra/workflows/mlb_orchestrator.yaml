@@ -167,10 +167,14 @@ main:
     - final_status_check:
         switch:
           - condition: ${ abstract == "final" or detailed == "final" }
-            next: run_ingest
+            next: sleep_before_ingest
         next: not_final_yet
 
-    # ------------------ When FINAL: ingest -> sleep -> digest -> finish ------------------
+    # ------------------ When FINAL: sleep -> ingest -> sleep -> digest -> finish ------------------
+    - sleep_before_ingest:
+        call: sys.sleep
+        args:
+          seconds: 180
     - run_ingest:
         call: googleapis.run.v2.projects.locations.jobs.run
         args:
@@ -183,7 +187,7 @@ main:
     - sleep_before_digest:
         call: sys.sleep
         args:
-          seconds: 120
+          seconds: 300
     - run_digest:
         call: googleapis.run.v2.projects.locations.jobs.run
         args:
