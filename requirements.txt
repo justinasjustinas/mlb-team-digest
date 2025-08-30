@@ -1,5 +1,6 @@
 requests>=2.32
 pytest>=8.4.1
 google-cloud-storage>=2.18.0
-google-cloud-bigquery
-pytz
+google-cloud-bigquery==3.36.0
+pytz==2025.2
+
