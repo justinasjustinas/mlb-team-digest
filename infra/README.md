@@ -62,8 +62,8 @@ Cloud Scheduler triggers the Workflow on a schedule:
 | Principal   | Roles                                              | Why                                            |
 | ----------- | -------------------------------------------------- | ---------------------------------------------- |
 | CI SA       | `roles/run.admin`, `roles/workflows.admin`         | Update Cloud Run jobs, deploy/update Workflows |
-|             | `roles/artifactregistry.writer` _(scoped to repo)_ | Push images to Artifact Registry               |
-| Workflow SA | `roles/run.viewer`, _(optional)_ `roles/logging.logWriter` | View Cloud Run jobs; allow Workflow to write logs |
+|             | `roles/artifactregistry.writer` _(project-level)_  | Push images to Artifact Registry               |
+| Workflow SA | `roles/run.viewer`, `roles/run.invoker`, _(optional)_ `roles/logging.logWriter` | View/invoke Cloud Run jobs; allow Workflow to write logs |
 
 ---
 
@@ -77,7 +77,8 @@ Cloud Scheduler triggers the Workflow on a schedule:
 | Job Runtime SAs             | CI SA        | `roles/iam.serviceAccountUser`                                    | CI can deploy/update jobs using these runtime SAs                     |
 | Workflow SA                 | CI SA        | `roles/iam.serviceAccountUser`                                    | CI can set Workflow’s runtime SA during deploy                        |
 | Job Runtime SA _(optional)_ | Workflow SA  | `roles/iam.serviceAccountUser` _(only if overridden at run time)_ | Needed only if workflow overrides the job’s runtime SA in run request |
-| Artifact Registry repo      | CI SA        | `roles/artifactregistry.writer` _(scoped to repo)_                | Push images from CI                                                   |
+| Project (Artifact Registry) | CI SA        | `roles/artifactregistry.writer` _(project-level)_                 | Push images from CI                                                   |
+| Artifact Registry repo      | Cloud Build SA | `roles/artifactregistry.writer`                                  | Allow Cloud Build to push images                                      |
 
 > Instead of `roles/run.admin`, we defined a custom role `runJobRunnerWithOverrides` for the Workflow SA with only:
 >
@@ -91,12 +92,12 @@ Cloud Scheduler triggers the Workflow on a schedule:
 
 ---
 
-### 3.3 BigQuery dataset-level IAM
+### 3.3 BigQuery project-level IAM
 
-| Dataset | Member        | Role                        | Why                           |
-| ------- | ------------- | --------------------------- | ----------------------------- |
-| `mlb`   | Ingest Job SA | `roles/bigquery.dataEditor` | Write game data               |
-| `mlb`   | Digest Job SA | `roles/bigquery.dataViewer` | Read data to assemble digests |
+| Scope   | Member        | Roles                                              | Why                          |
+| ------- | ------------- | -------------------------------------------------- | ---------------------------- |
+| Project | Ingest Job SA | `roles/bigquery.dataEditor`, `roles/bigquery.jobUser` | Write/query jobs in BigQuery |
+| Project | Digest Job SA | `roles/bigquery.dataEditor`, `roles/bigquery.jobUser` | Read/write digests; run jobs |
 
 ---
 
@@ -118,6 +119,26 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 
 ---
+
+### 3.5 Cloud Run Jobs configuration (env)
+
+Both jobs receive consistent BigQuery configuration via environment variables set by Terraform:
+
+- `BQ_PROJECT`: `${var.project_id}`
+- `BQ_DATASET`: `${var.dataset_id}` (e.g., `mlb`)
+- `BQ_LOCATION`: `${var.bq_location}` (e.g., `EU`)
+
+Job-specific details:
+
+- `mlb-ingest`
+  - Adds `OUTPUT_SINK=bq` to ensure writes to BigQuery.
+  - Runtime SA: `mlb-ingest-sa`.
+
+- `mlb-digest`
+  - Overrides command: `python game_digest.py`.
+  - Runtime SA: `mlb-digest-sa`.
+
+These reflect the job specs captured in iam_dump and the Terraform resources under `infra/terraform/main.tf`.
 
 ## 4) Workflow logic (mlb-orchestrator)
 
@@ -179,7 +200,7 @@ gcloud iam service-accounts add-iam-policy-binding \
 ```
 
 [ GitHub Actions CI SA ]
-| artifactregistry.writer (repo-scoped)
+| artifactregistry.writer (project-level)
 | run.admin
 | workflows.admin
 | iam.serviceAccountUser on ---> [ Workflow SA ]
@@ -191,6 +212,7 @@ gcloud iam service-accounts add-iam-policy-binding \
 +--> deploys/updates -------> [ Cloud Workflow ] (mlb-orchestrator)
 
 [ Workflow SA ]
+| run.invoker
 | (optional) logging.logWriter
 | roles/runJobRunnerWithOverrides on:
 | - Cloud Run Job: mlb-ingest
@@ -204,12 +226,12 @@ gcloud iam service-accounts add-iam-policy-binding \
 | iam.serviceAccountUser on -------> [ Ingest/Digest Job Runtime SA ]
 
 [ Ingest Job SA ]
-| bigquery.dataEditor on dataset: mlb
+| bigquery.dataEditor (project-level); bigquery.jobUser
 +--> writes -----------------------> [ BigQuery dataset: mlb ]
 
 [ Digest Job SA ]
-| bigquery.dataViewer on dataset: mlb
-+--> reads ------------------------> [ BigQuery dataset: mlb ]
+| bigquery.dataEditor (project-level); bigquery.jobUser
++--> reads/writes -----------------> [ BigQuery dataset: mlb ]
 
 [ Cloud Scheduler SA ] (if used)
 | workflows.invoker

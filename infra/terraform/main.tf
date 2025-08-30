@@ -55,14 +55,6 @@ resource "google_bigquery_dataset" "mlb" {
   location                   = var.bq_location
   description                = "MLB ingest dataset"
   delete_contents_on_destroy = false
-  access {
-    iam_member = "serviceAccount:${google_service_account.ingest.email}"
-    role       = "roles/bigquery.dataEditor"
-  }
-  access {
-    iam_member = "serviceAccount:${google_service_account.digest.email}"
-    role       = "roles/bigquery.dataViewer"
-  }
   depends_on = [google_project_service.apis]
 }
 
@@ -88,25 +80,15 @@ resource "google_service_account" "scheduler" {
 }
 
 resource "google_service_account" "ci" {
-  account_id   = "mlb-ci-sa"
+  account_id   = "github-actions"
   display_name = "CI Service Account"
 }
 
 # IAM for job runtime SAs
-resource "google_project_iam_member" "ingest_ar_reader" {
-  project = var.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.ingest.email}"
-}
 resource "google_project_iam_member" "ingest_bq_jobuser" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"
   member  = "serviceAccount:${google_service_account.ingest.email}"
-}
-resource "google_project_iam_member" "digest_ar_reader" {
-  project = var.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.digest.email}"
 }
 resource "google_project_iam_member" "digest_bq_jobuser" {
   project = var.project_id
@@ -144,9 +126,9 @@ resource "google_project_iam_custom_role" "run_job_runner_with_overrides" {
   ]
 }
 
-resource "google_project_iam_member" "wf_run_job_runner" {
+resource "google_project_iam_member" "wf_run_invoker" {
   project = var.project_id
-  role    = google_project_iam_custom_role.run_job_runner_with_overrides.name
+  role    = "roles/run.invoker"
   member  = "serviceAccount:${google_service_account.wf.email}"
 }
 resource "google_project_iam_member" "wf_run_viewer" {
@@ -186,11 +168,10 @@ resource "google_project_iam_member" "ci_workflows_admin" {
   member  = "serviceAccount:${google_service_account.ci.email}"
 }
 
-resource "google_artifact_registry_repository_iam_member" "ci_writer" {
-  location   = var.region
-  repository = google_artifact_registry_repository.repo.repository_id
-  role       = "roles/artifactregistry.writer"
-  member     = "serviceAccount:${google_service_account.ci.email}"
+resource "google_project_iam_member" "ci_ar_writer" {
+  project = var.project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:${google_service_account.ci.email}"
 }
 
 # CI can impersonate runtime service accounts
@@ -258,6 +239,16 @@ resource "google_cloud_run_v2_job" "ingest" {
         image = local.image_uri
 
         env {
+          name  = "BQ_PROJECT"
+          value = var.project_id
+        }
+
+        env {
+          name  = "BQ_DATASET"
+          value = var.dataset_id
+        }
+
+        env {
           name  = "OUTPUT_SINK"
           value = "bq"
         }
@@ -288,6 +279,16 @@ resource "google_cloud_run_v2_job" "digest" {
       containers {
         image   = local.image_uri
         command = ["python", "game_digest.py"]
+
+        env {
+          name  = "BQ_PROJECT"
+          value = var.project_id
+        }
+
+        env {
+          name  = "BQ_DATASET"
+          value = var.dataset_id
+        }
 
         env {
           name  = "BQ_LOCATION"
@@ -324,4 +325,35 @@ resource "google_cloud_scheduler_job" "daily_team" {
     google_project_iam_member.scheduler_workflows_invoker,
     google_workflows_workflow.orchestrator
   ]
+}
+
+# Grant Workflows SA ability to run jobs with overrides on specific jobs (resource-level)
+resource "google_cloud_run_v2_job_iam_member" "ingest_runner" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_job.ingest.name
+  role     = google_project_iam_custom_role.run_job_runner_with_overrides.name
+  member   = "serviceAccount:${google_service_account.wf.email}"
+}
+
+resource "google_cloud_run_v2_job_iam_member" "digest_runner" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_job.digest.name
+  role     = google_project_iam_custom_role.run_job_runner_with_overrides.name
+  member   = "serviceAccount:${google_service_account.wf.email}"
+}
+
+# Project-level BigQuery roles for job SAs (reflecting current state)
+resource "google_project_iam_member" "ingest_bq_data_editor" {
+  project = var.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = "serviceAccount:${google_service_account.ingest.email}"
+}
+
+
+resource "google_project_iam_member" "digest_bq_data_editor" {
+  project = var.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = "serviceAccount:${google_service_account.digest.email}"
 }
