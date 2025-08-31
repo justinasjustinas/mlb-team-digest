@@ -33,7 +33,7 @@ def compute_batting_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     SLG = safe_div(TB, AB)
     OPS = OBP + SLG
 
-    BAT_LO, BAT_HI = 0.0, 12.0
+    BAT_LO, BAT_HI = 0.0, 20.0  # the wider the range, the more difficult it is to achieve 100
 
     BAT_SCORE_RAW = 5 * HR + 3 * (D2 + D3) + 2 * (BB + HBP + SB) + singles + 2.0 * RBI + 1.0 * R
     BAT_SCORE = to_100(BAT_SCORE_RAW, BAT_LO, BAT_HI)
