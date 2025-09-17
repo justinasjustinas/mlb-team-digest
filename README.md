@@ -31,6 +31,7 @@ BigQuery  ──▶  Digest (game_digest.py) ──▶  BigQuery: mlb.game_diges
   - Computes a tidy markdown body: final score, linescore, team totals, top batters, pitching highlight, and a short “notables” list.
   - Prints the digest to stdout **and** (by default) writes one row per final game into `mlb.game_digests`.
   - You can disable writing with `--no_write` (useful locally).
+  - Cloud Run emits a structured log entry with `component="game_digest"` and `event="digest_written"` whenever a digest row is written.
 
 ---
 
@@ -44,10 +45,10 @@ Away: 0 0 1 1 2 0 0 0 0
 Home: 1 0 0 0 0 2 0 0 0
 
 ### Top Batter for Chicago Cubs
-- Kyle Tucker: 7.50 BAT_SCORE, 0 HR, 1 RBI, .333 AVG, .600 OBP, .333 SLG, .933 OPS
+- Kyle Tucker: 70.00 BAT_SCORE, 0 HR, 1 RBI, .333 AVG, .600 OBP, .333 SLG, .933 OPS
 
 ### Top Pitcher for Chicago Cubs
-- Jameson Taillon: 26.00 PITCH_SCORE, 5.0 IP, 1.80 ERA, 0.60 WHIP
+- Jameson Taillon: 75.00 PITCH_SCORE, 5.0 IP, 1.80 ERA, 0.60 WHIP
 ```
 
 > Note: This is a representative example. Your actual output depends on the selected team/date and the underlying data, obviously.

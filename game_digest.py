@@ -316,6 +316,19 @@ def main() -> int:
         "created_at": dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
     bq_write_digest(client, args.bq_project, args.bq_dataset, row)
+
+    payload = {
+        "severity": "INFO",
+        "component": "game_digest",
+        "event": "digest_written",
+        "team_id": row["team_id"],
+        "team_name": row["team_name"],
+        "game_id": row["game_id"],
+        "game_date": row["game_date"],
+        "digest_md": row["digest_md"],
+        "created_at": row["created_at"],
+    }
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
     return 0
 
 if __name__ == "__main__":

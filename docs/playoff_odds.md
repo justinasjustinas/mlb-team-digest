@@ -3,8 +3,7 @@
 The `playoff_odds` module powers the postseason percentage that now
 appears in the game digest. It is intentionally lightweight: rather than
 training a predictive model we rely on the freshest standings and a few
-baseball-savvy rules of thumb so the number is easy to reason about and
-can run anywhere we ship the digest.
+baseball-savvy rules of thumb so the number is easy to reason about.
 
 ## Data source
 
@@ -43,8 +42,8 @@ The estimator computes two probabilities and then combines them:
    wildcard. As before, the margin is converted to a probability via a
    sigmoid.
 
-The final postseason odds equal ``1 - (1 - P_division) * (1 -
-P_wildcard)``, representing the chance the team reaches October either
+The final postseason odds equal `1 - (1 - P_division) * (1 -
+P_wildcard)`, representing the chance the team reaches October either
 through winning the division or via a wildcard berth. Division leaders
 skip the wildcard calculation—they already have a direct path, so their
 probability is simply the division estimate.
