@@ -125,6 +125,8 @@ def test_build_from_json_happy_path(monkeypatch, tmp_path: Path, capsys):
     # Point module to tmp dir
     monkeypatch.setenv("DIGEST_JSON_DIR", str(tmp_path))
     mod.JSON_DIR = str(tmp_path)
+    monkeypatch.setattr(mod.playoff_odds, "estimate_playoff_odds", lambda team_id: 75)
+    monkeypatch.setattr(mod.playoff_odds, "estimate_playoff_odds", lambda team_id: 75)
 
     # Act
     body, out_game_id, out_team_id = mod.build_from_json(team=away_name, date_iso=date_iso)
@@ -138,6 +140,7 @@ def test_build_from_json_happy_path(monkeypatch, tmp_path: Path, capsys):
     assert "Home: 0 0 0 1 0 0 0 0 0" in body
     assert "### Top Batter for Chicago Cubs" in body
     assert "### Top Pitcher for Chicago Cubs" in body
+    assert "### Chicago Cubs postseason odds: 75%" in body
 
 
 def test_find_summary_for_errors(monkeypatch, tmp_path: Path):
@@ -179,6 +182,7 @@ def test_main_json_flow(monkeypatch, tmp_path: Path, capsys):
 
     monkeypatch.setenv("DIGEST_JSON_DIR", str(tmp_path))
     mod.JSON_DIR = str(tmp_path)
+    monkeypatch.setattr(mod.playoff_odds, "estimate_playoff_odds", lambda team_id: 75)
 
     argv = ["prog", "--team", away_name, "--date", date_iso, "--output", "json"]
     monkeypatch.setattr(sys, "argv", argv)
@@ -189,6 +193,7 @@ def test_main_json_flow(monkeypatch, tmp_path: Path, capsys):
     assert out.startswith(f"## Final: {away_name} 12-1 {home_name}")
     assert "### Top Batter for Chicago Cubs" in out
     assert "### Top Pitcher for Chicago Cubs" in out
+    assert "### Chicago Cubs postseason odds: 75%" in out
 
 
 # ------------------------
@@ -233,6 +238,7 @@ def test_build_from_bq_and_main_bq_flow(monkeypatch, capsys):
     monkeypatch.setattr(mod, "bq_query", fake_bq_query)
     monkeypatch.setattr(mod, "bq_client_or_none", lambda proj: client)
     monkeypatch.setattr(mod, "bq_write_digest", lambda c, p, d, row: writes.append(row))
+    monkeypatch.setattr(mod.playoff_odds, "estimate_playoff_odds", lambda team_id: 75)
 
     # Run main in bq mode
     argv = [
@@ -257,6 +263,7 @@ def test_build_from_bq_and_main_bq_flow(monkeypatch, capsys):
     assert row["game_date"] == "2025-08-23"
     assert row["created_at"].endswith("Z")
     assert "## Final: Chicago Cubs 5-1 Los Angeles Angels" in row["digest_md"]
+    assert "### Chicago Cubs is 75% likely to make it to Playoffs this year" in row["digest_md"]
 
 
 # ------------------------

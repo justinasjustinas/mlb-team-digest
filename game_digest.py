@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import playoff_odds
+
 # =============================
 # Config / Defaults
 # =============================
@@ -110,6 +112,7 @@ def build_from_json(team: str, date_iso: str) -> Tuple[str, Optional[int], Optio
     if team_is_home else
     (summary.get("home_team_name") or summary.get("home_team"))
 )
+    team_id = int(summary["home_team_id"] if team_is_home else summary["away_team_id"])
     our_score = int(summary["home_score"] if team_is_home else summary["away_score"])
     opp_score = int(summary["away_score"] if team_is_home else summary["home_score"])
 
@@ -142,7 +145,11 @@ def build_from_json(team: str, date_iso: str) -> Tuple[str, Optional[int], Optio
         out.append(f"- {name}: {fmt_rate(float(top_p['PITCH_SCORE']),2,True)} PITCH_SCORE, "
                    f"{float(ip_val):.1f} IP, {float(top_p.get('ERA',0.0)):.2f} ERA, {float(top_p.get('WHIP',0.0)):.2f} WHIP")
         out.append("")
-    return "\n".join(out), game_id, int(summary["home_team_id"] if team_is_home else summary["away_team_id"])
+    prob = playoff_odds.estimate_playoff_odds(team_id)
+    if prob is not None:
+        out.append(f"### {team_name} postseason odds: {prob}%")
+        out.append("")
+    return "\n".join(out), game_id, team_id
 
 # =============================
 # BigQuery
@@ -242,6 +249,7 @@ def build_from_bq(client, project: str, dataset: str, team: str, date_iso: str) 
     our_is_home = (str(g.get("home_team_id")) == str(team)) or ((g.get("home_team_name","")).lower() == str(team).lower())
     team_name = g["home_team_name"] if our_is_home else g["away_team_name"]
     opp_name  = g["away_team_name"] if our_is_home else g["home_team_name"]
+    team_id = int(g["home_team_id"] if our_is_home else g["away_team_id"])
     our_score = int(g["home_score"] if our_is_home else g["away_score"])
     opp_score = int(g["away_score"] if our_is_home else g["home_score"])
 
@@ -267,7 +275,11 @@ def build_from_bq(client, project: str, dataset: str, team: str, date_iso: str) 
         out.append(f"- {name}: {fmt_rate(float(top_p['PITCH_SCORE']),2,True)} PITCH_SCORE, "
                    f"{float(ip_val):.1f} IP, {float(top_p.get('ERA',0.0)):.2f} ERA, {float(top_p.get('WHIP',0.0)):.2f} WHIP")
         out.append("")
-    return "\n".join(out), int(game_id), int(g["home_team_id"] if our_is_home else g["away_team_id"])
+    prob = playoff_odds.estimate_playoff_odds(team_id)
+    if prob is not None:
+        out.append(f"### {team_name} is {prob}% likely to make it to Playoffs this year")
+        out.append("")
+    return "\n".join(out), int(game_id), team_id
 
 # =============================
 # CLI
