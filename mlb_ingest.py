@@ -196,6 +196,13 @@ def _pit_row(game_pk:int, team_side:str, team_block:Dict[str,Any], player:Dict[s
         return None
 
     ip_str = stats.get("inningsPitched")  # e.g., "6.1"
+    started_flag = player.get("gameStatus", {}) or {}
+    started = started_flag.get("isStarter")
+    if started is None:
+        started = started_flag.get("isCurrentPitcher")
+    if started is None:
+        started = bool((stats.get("gamesStarted") or 0) > 0)
+
     row = {
         "role": "pitcher",
         "game_id": game_pk,
@@ -204,7 +211,7 @@ def _pit_row(game_pk:int, team_side:str, team_block:Dict[str,Any], player:Dict[s
         "is_home": team_side == "home",
         "player_id": int(player.get("person",{}).get("id",0)),
         "name": player.get("person",{}).get("fullName"),
-        "started": bool(player.get("gameStatus",{}).get("isCurrentPitcher") or False),
+        "started": bool(started),
         # raw
         "IP": float(ip_str) if isinstance(ip_str, str) and ip_str.replace('.', '', 1).isdigit() else ip_str,
         "ER": stats.get("earnedRuns", 0),

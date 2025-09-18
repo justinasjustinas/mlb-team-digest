@@ -6,6 +6,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -121,7 +122,8 @@ def build_from_json(team: str, date_iso: str) -> Tuple[str, Optional[int], Optio
     pitchers = [r for r in our_players if (r.get("role") == "pitcher") or (r.get("outs") is not None) or (r.get("IP") is not None)]
 
     top_b = pick_top_batter(batters)
-    top_p = pick_top_pitcher(pitchers)
+    sp = pick_starting_pitcher(pitchers)
+    rp = pick_top_relief_pitcher(pitchers, sp)
 
     out: List[str] = []
     out.append(f"## Final: {team_name} {our_score}-{opp_score} {opp_name}")
@@ -138,12 +140,20 @@ def build_from_json(team: str, date_iso: str) -> Tuple[str, Optional[int], Optio
                    f"{fmt_rate(float(top_b['AVG']))} AVG, {fmt_rate(float(top_b['OBP']))} OBP, "
                    f"{fmt_rate(float(top_b['SLG']))} SLG, {fmt_rate(float(top_b['OPS']))} OPS")
         out.append("")
-    if top_p:
-        name = top_p.get("name") or top_p.get("player_name") or top_p.get("fullName") or "Top Pitcher"
-        ip_val = top_p.get("IP", (top_p.get("outs", 0)/3.0))
-        out.append(f"### Top Pitcher for {team_name}")
-        out.append(f"- {name}: {fmt_rate(float(top_p['PITCH_SCORE']),2,True)} PITCH_SCORE, "
-                   f"{float(ip_val):.1f} IP, {float(top_p.get('ERA',0.0)):.2f} ERA, {float(top_p.get('WHIP',0.0)):.2f} WHIP")
+    if sp or rp:
+        out.append(f"### Pitching for {team_name}")
+        if sp:
+            name = sp.get("name") or sp.get("player_name") or sp.get("fullName") or "Starting Pitcher"
+            out.append(
+                f"- SP {name}: {fmt_rate(float(sp['PITCH_SCORE']),2,True)} PITCH_SCORE, "
+                f"{format_ip_value(sp)} IP, {float(sp.get('ERA',0.0)):.2f} ERA, {float(sp.get('WHIP',0.0)):.2f} WHIP"
+            )
+        if rp:
+            name = rp.get("name") or rp.get("player_name") or rp.get("fullName") or "Top Reliever"
+            out.append(
+                f"- RP {name}: {fmt_rate(float(rp['PITCH_SCORE']),2,True)} PITCH_SCORE, "
+                f"{format_ip_value(rp)} IP, {float(rp.get('ERA',0.0)):.2f} ERA, {float(rp.get('WHIP',0.0)):.2f} WHIP"
+            )
         out.append("")
     prob = playoff_odds.estimate_playoff_odds(team_id)
     if prob is not None:
@@ -190,17 +200,110 @@ def bq_write_digest(client, project: str, dataset: str, row: Dict[str, Any]) -> 
     job = client.load_table_from_json([row], table)
     job.result()
 
+
+_BASEBALL_IP_RE = re.compile(r"^\s*(\d+)(?:\.(\d))?\s*$")
+
+
+def _coerce_outs(value: Any) -> Optional[int]:
+    try:
+        outs = int(round(float(value)))
+    except Exception:
+        return None
+    return outs if outs >= 0 else None
+
+
+def _parse_ip_to_outs(ip_val: Any) -> Optional[int]:
+    if ip_val is None:
+        return None
+
+    if isinstance(ip_val, (int, float)):
+        try:
+            outs = int(round(float(ip_val) * 3.0))
+        except Exception:
+            return None
+        return outs if outs >= 0 else None
+
+    if isinstance(ip_val, str):
+        ip_str = ip_val.strip()
+        if not ip_str:
+            return None
+
+        m = _BASEBALL_IP_RE.match(ip_str)
+        if m:
+            innings = int(m.group(1))
+            remainder = int(m.group(2) or 0)
+            remainder = max(0, min(remainder, 2))
+            return innings * 3 + remainder
+
+        try:
+            outs = int(round(float(ip_str) * 3.0))
+        except Exception:
+            return None
+        return outs if outs >= 0 else None
+
+    return None
+
+
+def format_ip_value(row: Dict[str, Any]) -> str:
+    """Format innings pitched using baseball-style tenths (e.g., 6.2 == 6⅔)."""
+
+    outs = _coerce_outs(row.get("outs"))
+    if outs is None:
+        outs = _parse_ip_to_outs(row.get("IP"))
+
+    if outs is None:
+        raw = row.get("IP")
+        return str(raw) if raw is not None else "0.0"
+
+    innings = outs // 3
+    remainder = outs % 3
+    return f"{innings}.{remainder}"
+
+
 def pick_top_batter(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     rows = [r for r in rows if r.get("BAT_SCORE") is not None]
     if not rows: return None
     rows.sort(key=lambda r: float(r["BAT_SCORE"]), reverse=True)
     return rows[0]
 
-def pick_top_pitcher(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    rows = [r for r in rows if r.get("PITCH_SCORE") is not None]
-    if not rows: return None
-    rows.sort(key=lambda r: float(r["PITCH_SCORE"]), reverse=True)
-    return rows[0]
+def pick_starting_pitcher(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    pitchers = [r for r in rows if r.get("PITCH_SCORE") is not None]
+    if not pitchers:
+        return None
+
+    def start_key(row: Dict[str, Any]) -> Tuple[int, float]:
+        outs = int(row.get("outs") or 0)
+        score = float(row.get("PITCH_SCORE") or 0.0)
+        return outs, score
+
+    starters = [r for r in pitchers if r.get("started")]
+    if starters:
+        return sorted(starters, key=start_key, reverse=True)[0]
+
+    return sorted(pitchers, key=start_key, reverse=True)[0]
+
+
+def pick_top_relief_pitcher(rows: List[Dict[str, Any]], starter: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    pitchers = [r for r in rows if r.get("PITCH_SCORE") is not None]
+    if not pitchers:
+        return None
+
+    starter_id = starter.get("player_id") if starter else None
+    reliefs = [r for r in pitchers if not r.get("started")]
+    if starter_id is not None:
+        reliefs = [r for r in reliefs if r.get("player_id") != starter_id]
+    if starter is not None:
+        reliefs = [r for r in reliefs if r is not starter]
+
+    if not reliefs:
+        reliefs = [r for r in pitchers if r.get("player_id") != starter_id] if starter_id is not None else pitchers
+        if starter is not None:
+            reliefs = [r for r in reliefs if r is not starter]
+
+    if not reliefs:
+        return None
+
+    return sorted(reliefs, key=lambda r: float(r.get("PITCH_SCORE") or 0.0), reverse=True)[0]
 
 def build_from_bq(client, project: str, dataset: str, team: str, date_iso: str) -> Tuple[str, Optional[int], Optional[int]]:
     games = bq_query(
@@ -244,7 +347,8 @@ def build_from_bq(client, project: str, dataset: str, team: str, date_iso: str) 
     pitchers = [r for r in box if (r.get("role") == "pitcher") or (r.get("outs") is not None) or (r.get("IP") is not None)]
 
     top_b = pick_top_batter(batters)
-    top_p = pick_top_pitcher(pitchers)
+    sp = pick_starting_pitcher(pitchers)
+    rp = pick_top_relief_pitcher(pitchers, sp)
 
     our_is_home = (str(g.get("home_team_id")) == str(team)) or ((g.get("home_team_name","")).lower() == str(team).lower())
     team_name = g["home_team_name"] if our_is_home else g["away_team_name"]
@@ -268,12 +372,20 @@ def build_from_bq(client, project: str, dataset: str, team: str, date_iso: str) 
                    f"{fmt_rate(float(top_b['AVG']))} AVG, {fmt_rate(float(top_b['OBP']))} OBP, "
                    f"{fmt_rate(float(top_b['SLG']))} SLG, {fmt_rate(float(top_b['OPS']))} OPS")
         out.append("")
-    if top_p:
-        name = top_p.get("name") or top_p.get("player_name") or top_p.get("fullName") or "Top Pitcher"
-        ip_val = top_p.get("IP", (top_p.get("outs", 0)/3.0))
-        out.append(f"### Top Pitcher for {team_name}")
-        out.append(f"- {name}: {fmt_rate(float(top_p['PITCH_SCORE']),2,True)} PITCH_SCORE, "
-                   f"{float(ip_val):.1f} IP, {float(top_p.get('ERA',0.0)):.2f} ERA, {float(top_p.get('WHIP',0.0)):.2f} WHIP")
+    if sp or rp:
+        out.append(f"### Pitching for {team_name}")
+        if sp:
+            name = sp.get("name") or sp.get("player_name") or sp.get("fullName") or "Starting Pitcher"
+            out.append(
+                f"- SP {name}: {fmt_rate(float(sp['PITCH_SCORE']),2,True)} PITCH_SCORE, "
+                f"{format_ip_value(sp)} IP, {float(sp.get('ERA',0.0)):.2f} ERA, {float(sp.get('WHIP',0.0)):.2f} WHIP"
+            )
+        if rp:
+            name = rp.get("name") or rp.get("player_name") or rp.get("fullName") or "Top Reliever"
+            out.append(
+                f"- RP {name}: {fmt_rate(float(rp['PITCH_SCORE']),2,True)} PITCH_SCORE, "
+                f"{format_ip_value(rp)} IP, {float(rp.get('ERA',0.0)):.2f} ERA, {float(rp.get('WHIP',0.0)):.2f} WHIP"
+            )
         out.append("")
     prob = playoff_odds.estimate_playoff_odds(team_id)
     if prob is not None:

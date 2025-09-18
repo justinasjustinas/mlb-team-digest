@@ -92,6 +92,7 @@ def sample_feed(
                             "ID2": {
                                 "person": {"id": 2002, "fullName": "Away Pitcher"},
                                 "position": {"abbreviation": "P"},
+                                "gameStatus": {"isStarter": True},
                                 "stats": {
                                     "batting": {
                                         "atBats": 0, "runs": 0, "hits": 0,
