@@ -43,9 +43,11 @@ def _mk_players(game_id: int, team_id: int, team_name: str):
         "game_id": game_id,
         "team_id": team_id,
         "team_name": team_name,
+        "started": True,
         "outs": 18, "IP": 6.0, "ERA": 1.50, "WHIP": 0.83, "SO": 7, "HR": 0,
         "PITCH_SCORE": 38.0,
         "name": "Ace Pitcher",
+        "player_id": 2000,
     }
     return [batter, pitcher]
 
@@ -82,17 +84,50 @@ def test_is_our_row_helpers():
     assert not mod.is_our_team_row(r, "other")
 
 
-def test_pick_top_batter_and_pitcher():
+def test_pick_top_batter_and_pitching_helpers():
     batters = [
         {"BAT_SCORE": 5, "HR": 0, "RBI": 1, "H": 1, "name": "B1"},
         {"BAT_SCORE": 7, "HR": 1, "RBI": 1, "H": 2, "name": "B2"},  # best
     ]
     pitchers = [
-        {"PITCH_SCORE": 30, "outs": 9, "ERA": 2.0, "WHIP": 1.1, "name": "P1"},
-        {"PITCH_SCORE": 35, "outs": 12, "ERA": 1.5, "WHIP": 1.0, "name": "P2"},  # best
+        {"PITCH_SCORE": 30, "outs": 18, "ERA": 2.0, "WHIP": 1.1, "name": "Starter", "player_id": 1, "started": True},
+        {"PITCH_SCORE": 42, "outs": 6, "ERA": 0.0, "WHIP": 0.5, "name": "Closer", "player_id": 2, "started": False},
+        {"PITCH_SCORE": 25, "outs": 3, "ERA": 3.0, "WHIP": 1.4, "name": "Mop-up", "player_id": 3, "started": False},
     ]
     assert mod.pick_top_batter(batters)["name"] == "B2"
-    assert mod.pick_top_pitcher(pitchers)["name"] == "P2"
+    starter = mod.pick_starting_pitcher(pitchers)
+    assert starter["name"] == "Starter"
+    assert mod.pick_top_relief_pitcher(pitchers, starter)["name"] == "Closer"
+
+
+def test_pick_top_relief_pitcher_excludes_starter_without_id():
+    pitchers = [
+        {"PITCH_SCORE": 60, "outs": 15, "ERA": 1.8, "WHIP": 0.9, "name": "Starter", "started": True},
+        {"PITCH_SCORE": 55, "outs": 9, "ERA": 2.0, "WHIP": 1.0, "name": "Setup", "started": False},
+    ]
+    starter = mod.pick_starting_pitcher(pitchers)
+    assert starter["name"] == "Starter"
+    top_relief = mod.pick_top_relief_pitcher(pitchers, starter)
+    assert top_relief["name"] == "Setup"
+
+
+def test_format_ip_value_prefers_outs_and_uses_baseball_style():
+    row_with_outs = {"outs": 20, "IP": 6.6667}
+    assert mod.format_ip_value(row_with_outs) == "6.2"
+
+    row_without_outs = {"IP": 2.3333}
+    assert mod.format_ip_value(row_without_outs) == "2.1"
+
+    row_with_string = {"IP": "6.1"}
+    assert mod.format_ip_value(row_with_string) == "6.1"
+
+    row_with_int = {"IP": 5}
+    assert mod.format_ip_value(row_with_int) == "5.0"
+
+    row_with_bad_ip = {"IP": "n/a"}
+    assert mod.format_ip_value(row_with_bad_ip) == "n/a"
+
+    assert mod.format_ip_value({}) == "0.0"
 
 
 # ------------------------
@@ -116,6 +151,24 @@ def test_build_from_json_happy_path(monkeypatch, tmp_path: Path, capsys):
     }
     lines = _mk_linescore(game_id, innings_away=[2,0,3,0,0,0,0,0,0], innings_home=[0,0,0,1,0,0,0,0,0])
     players = _mk_players(game_id, team_id=away_id, team_name=away_name)
+    players.append(
+        {
+            "role": "pitcher",
+            "game_id": game_id,
+            "team_id": away_id,
+            "team_name": away_name,
+            "started": False,
+            "outs": 5,
+            "IP": 5 / 3,
+            "ERA": 0.00,
+            "WHIP": 0.60,
+            "SO": 4,
+            "HR": 0,
+            "PITCH_SCORE": 55.0,
+            "name": "Setup Reliever",
+            "player_id": 2001,
+        }
+    )
 
     # Write triplet
     (tmp_path / f"{game_id}_summary.json").write_text(json.dumps(summary), encoding="utf-8")
@@ -139,7 +192,11 @@ def test_build_from_json_happy_path(monkeypatch, tmp_path: Path, capsys):
     assert "Away: 2 0 3 0 0 0 0 0 0" in body
     assert "Home: 0 0 0 1 0 0 0 0 0" in body
     assert "### Top Batter for Chicago Cubs" in body
-    assert "### Top Pitcher for Chicago Cubs" in body
+    assert "### Pitching for Chicago Cubs" in body
+    assert "- SP Ace Pitcher" in body
+    assert "6.0 IP" in body
+    assert "- RP Setup Reliever" in body
+    assert "1.2 IP" in body
     assert "### Chicago Cubs postseason odds: 75%" in body
 
 
@@ -175,6 +232,24 @@ def test_main_json_flow(monkeypatch, tmp_path: Path, capsys):
     }
     lines = _mk_linescore(game_id, innings_away=[2,0,3,0,0,0,3,4,0], innings_home=[0,0,0,1,0,0,0,0,0])
     players = _mk_players(game_id, team_id=away_id, team_name=away_name)
+    players.append(
+        {
+            "role": "pitcher",
+            "game_id": game_id,
+            "team_id": away_id,
+            "team_name": away_name,
+            "started": False,
+            "outs": 4,
+            "IP": 4 / 3,
+            "ERA": 0.00,
+            "WHIP": 0.75,
+            "SO": 3,
+            "HR": 0,
+            "PITCH_SCORE": 52.0,
+            "name": "High-Leverage Reliever",
+            "player_id": 2003,
+        }
+    )
 
     (tmp_path / f"{game_id}_summary.json").write_text(json.dumps(summary), encoding="utf-8")
     (tmp_path / f"{game_id}_linescore.json").write_text(json.dumps(lines), encoding="utf-8")
@@ -192,7 +267,11 @@ def test_main_json_flow(monkeypatch, tmp_path: Path, capsys):
     out = capsys.readouterr().out
     assert out.startswith(f"## Final: {away_name} 12-1 {home_name}")
     assert "### Top Batter for Chicago Cubs" in out
-    assert "### Top Pitcher for Chicago Cubs" in out
+    assert "### Pitching for Chicago Cubs" in out
+    assert "- SP Ace Pitcher" in out
+    assert "6.0 IP" in out
+    assert "- RP High-Leverage Reliever" in out
+    assert "1.1 IP" in out
     assert "### Chicago Cubs postseason odds: 75%" in out
 
 
@@ -225,7 +304,26 @@ def test_build_from_bq_and_main_bq_flow(monkeypatch, capsys):
                 {"is_home": True,  "inning_num": 3, "runs": 0},
             ]
         if "FROM `p.d.game_boxscore_players`" in sql:
-            return _mk_players(game_id, team_id=away["id"], team_name=away["name"])
+            players = _mk_players(game_id, team_id=away["id"], team_name=away["name"])
+            players.append(
+                {
+                    "role": "pitcher",
+                    "game_id": game_id,
+                    "team_id": away["id"],
+                    "team_name": away["name"],
+                    "started": False,
+                    "outs": 4,
+                    "IP": 4 / 3,
+                    "ERA": 0.00,
+                    "WHIP": 0.75,
+                    "SO": 3,
+                    "HR": 0,
+                    "PITCH_SCORE": 52.0,
+                    "name": "High-Leverage Reliever",
+                    "player_id": 2003,
+                }
+            )
+            return players
         raise AssertionError(f"Unexpected SQL: {sql}")
 
     # Capture digests written
@@ -263,6 +361,11 @@ def test_build_from_bq_and_main_bq_flow(monkeypatch, capsys):
     assert row["game_date"] == "2025-08-23"
     assert row["created_at"].endswith("Z")
     assert "## Final: Chicago Cubs 5-1 Los Angeles Angels" in row["digest_md"]
+    assert "### Pitching for Chicago Cubs" in row["digest_md"]
+    assert "SP Ace Pitcher" in row["digest_md"]
+    assert "6.0 IP" in row["digest_md"]
+    assert "RP High-Leverage Reliever" in row["digest_md"]
+    assert "1.1 IP" in row["digest_md"]
     assert "### Chicago Cubs is 75% likely to make it to Playoffs this year" in row["digest_md"]
 
 
