@@ -16,9 +16,8 @@ from typing import Any, Iterable, List, Optional, Sequence
 import requests
 
 STANDINGS_URL = (
-    "https://bdfed.stitch.mlbinfra.com/bdfed/stats/team?&env=prod"
-    "&sportId=1&gameType=R&group=hitting&order=desc&sortStat=homeRuns"
-    "&stats=season&season=2025&&offset=0&sitCodes=a"
+    "https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2025"
+    "&standingsTypes=regularSeason&hydrate=team(division,league),division,league"
 )
 
 
@@ -50,11 +49,34 @@ def fetch_standings() -> List[TeamStanding]:
     payload = resp.json()
 
     teams: List[TeamStanding] = []
-    for raw in payload.get("data", []):
-        record = raw.get("stats", {}).get("standings", raw)
-        normalized = _normalize_team(record, raw)
+
+    # Primary parsing path for the StatsAPI standings endpoint.
+    for block in payload.get("records", []):
+        league = block.get("league") or {}
+        division = block.get("division") or {}
+        for entry in block.get("teamRecords", []):
+            enriched = dict(entry)
+            enriched.setdefault("league", entry.get("league") or league)
+            enriched.setdefault("division", entry.get("division") or division)
+            normalized = _normalize_team(enriched, entry)
+            if normalized:
+                teams.append(normalized)
+
+    if teams:
+        return teams
+
+    # Fallback path for the legacy bdfed endpoint shape.
+    raw_records = payload.get("data") or payload.get("stats") or []
+    for raw in raw_records:
+        record = raw.get("stats") if isinstance(raw, dict) else None
+        if isinstance(record, dict):
+            record = record.get("standings", record)
+        elif isinstance(record, list):
+            record = record[0] if record else raw
+        normalized = _normalize_team(record or raw, raw)
         if normalized:
             teams.append(normalized)
+
     return teams
 
 
@@ -126,18 +148,52 @@ def _normalize_team(record: Any, raw: Optional[Any] = None) -> Optional[TeamStan
 
     candidate = record or raw or {}
 
+    team_info = candidate.get("team") if isinstance(candidate, dict) else None
+
+    team_id_value = None
+    if isinstance(candidate, dict):
+        team_id_value = candidate.get("teamId") or candidate.get("team_id")
+    if team_id_value is None and isinstance(team_info, dict):
+        team_id_value = team_info.get("id")
+
     try:
-        team_id = int(candidate.get("teamId") or candidate.get("team_id"))
+        team_id = int(team_id_value)
     except Exception:
         return None
 
-    team_name = (candidate.get("teamName") or candidate.get("team_name") or "").strip()
-    league = _extract_name(candidate.get("league"))
-    division = _extract_name(candidate.get("division"))
+    team_name_value = ""
+    if isinstance(candidate, dict):
+        team_name_value = candidate.get("teamName") or candidate.get("team_name") or ""
+    if not team_name_value and isinstance(team_info, dict):
+        team_name_value = team_info.get("name", "")
+    team_name = str(team_name_value).strip()
+
+    league_value = None
+    division_value = None
+    if isinstance(candidate, dict):
+        league_value = candidate.get("league")
+        division_value = candidate.get("division")
+    if league_value is None and isinstance(team_info, dict):
+        league_value = team_info.get("league")
+    if division_value is None and isinstance(team_info, dict):
+        division_value = team_info.get("division")
+
+    league = _extract_name(league_value)
+    division = _extract_name(division_value)
+
+    wins_value = None
+    losses_value = None
+    if isinstance(candidate, dict):
+        wins_value = candidate.get("w") or candidate.get("wins")
+        losses_value = candidate.get("l") or candidate.get("losses")
+        if wins_value is None and "leagueRecord" in candidate:
+            wins_value = candidate.get("leagueRecord", {}).get("wins")
+        if losses_value is None and "leagueRecord" in candidate:
+            losses_value = candidate.get("leagueRecord", {}).get("losses")
 
     try:
-        wins = int(candidate.get("w") or candidate.get("wins") or 0)
-        losses = int(candidate.get("l") or candidate.get("losses") or 0)
+        wins = int(wins_value)
+        losses = int(losses_value)
     except Exception:
         return None
 
