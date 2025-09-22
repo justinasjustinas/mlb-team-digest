@@ -36,3 +36,42 @@ def test_wildcard_keeps_competitive_team_alive():
 
 def test_missing_team_returns_none():
     assert po.estimate_playoff_odds(999, standings=sample_standings()) is None
+
+
+def test_clinched_division_reaches_full_probability():
+    standings = [
+        {"team_id": 11, "team_name": "Leader", "league": "L", "division": "East", "w": 95, "l": 60},
+        {"team_id": 12, "team_name": "Chaser", "league": "L", "division": "East", "w": 85, "l": 70},
+        {"team_id": 13, "team_name": "Spoiler", "league": "L", "division": "East", "w": 70, "l": 85},
+        {"team_id": 14, "team_name": "WestLeader", "league": "L", "division": "West", "w": 94, "l": 61},
+        {"team_id": 15, "team_name": "WestChaser", "league": "L", "division": "West", "w": 88, "l": 67},
+        {"team_id": 16, "team_name": "WestSpoiler", "league": "L", "division": "West", "w": 80, "l": 75},
+    ]
+
+    assert po.estimate_playoff_odds("Leader", standings=standings) == 100
+
+
+def test_locked_in_wildcard_reaches_full_probability():
+    standings = [
+        {"team_id": 21, "team_name": "EastLeader", "league": "L", "division": "East", "w": 95, "l": 60},
+        {"team_id": 22, "team_name": "EastSecond", "league": "L", "division": "East", "w": 92, "l": 63},
+        {"team_id": 23, "team_name": "EastThird", "league": "L", "division": "East", "w": 88, "l": 67},
+        {"team_id": 24, "team_name": "WestLeader", "league": "L", "division": "West", "w": 90, "l": 65},
+        {"team_id": 25, "team_name": "WestSecond", "league": "L", "division": "West", "w": 87, "l": 68},
+        {"team_id": 26, "team_name": "WestThird", "league": "L", "division": "West", "w": 70, "l": 85},
+    ]
+
+    assert po.estimate_playoff_odds("WestSecond", standings=standings) == 100
+
+
+def test_eliminated_wildcard_team_falls_to_zero():
+    standings = [
+        {"team_id": 31, "team_name": "EastLeader", "league": "L", "division": "East", "w": 96, "l": 58},
+        {"team_id": 32, "team_name": "EastSecond", "league": "L", "division": "East", "w": 88, "l": 66},
+        {"team_id": 33, "team_name": "EastThird", "league": "L", "division": "East", "w": 87, "l": 67},
+        {"team_id": 34, "team_name": "WestLeader", "league": "L", "division": "West", "w": 92, "l": 62},
+        {"team_id": 35, "team_name": "WestSecond", "league": "L", "division": "West", "w": 86, "l": 68},
+        {"team_id": 36, "team_name": "WestThird", "league": "L", "division": "West", "w": 70, "l": 84},
+    ]
+
+    assert po.estimate_playoff_odds("WestThird", standings=standings) == 0
