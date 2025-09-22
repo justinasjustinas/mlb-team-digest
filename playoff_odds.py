@@ -229,6 +229,12 @@ def _sigmoid(delta: float, scale: float = 2.0) -> float:
     return 1.0 / (1.0 + math.exp(-delta / scale))
 
 
+def _remaining_games(team: TeamStanding, total_games: int = 162) -> int:
+    """Return the number of scheduled games a team has left to play."""
+
+    return max(total_games - team.games_played, 0)
+
+
 def _division_probability(team: TeamStanding, peers: Sequence[TeamStanding]) -> float:
     if not peers:
         return 0.0
@@ -240,10 +246,14 @@ def _division_probability(team: TeamStanding, peers: Sequence[TeamStanding]) -> 
         if len(ranked) == 1:
             return 1.0
         runner_up = ranked[1]
+        if team.wins > runner_up.wins + _remaining_games(runner_up):
+            return 1.0
         games_ahead = _games_back(runner_up, team)
         return _sigmoid(games_ahead, scale=1.5)
 
     games_back = _games_back(team, leader)
+    if team.wins + _remaining_games(team) <= leader.wins:
+        return 0.0
     return _sigmoid(-games_back, scale=1.5)
 
 
@@ -277,9 +287,13 @@ def _wildcard_probability(team: TeamStanding, league_mates: Sequence[TeamStandin
         if len(candidates) <= slots:
             return 0.8
         next_best = candidates[slots]
+        if team.wins > next_best.wins + _remaining_games(next_best):
+            return 1.0
         cushion = _games_back(next_best, team)
         return _sigmoid(cushion, scale=3.0)
 
     third_team = candidates[slots - 1]
+    if team.wins + _remaining_games(team) <= third_team.wins:
+        return 0.0
     deficit = _games_back(team, third_team)
     return _sigmoid(-deficit, scale=3.0)
