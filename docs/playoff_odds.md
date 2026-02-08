@@ -57,3 +57,9 @@ probability is simply the division estimate.
 - The heuristics produce values in the 0–100 range while favouring teams
   that are leading or within striking distance, aligning with intuition
   without pretending to be a full simulation.
+
+## Next steps
+
+- Don’t skip wildcard for current division leaders. If they drop into second or third position, they can still advance as wildcards.
+- Scale difficulty by time remaining. A 2-game deficit in April ≠ a 2-game deficit on September 20. Make sigmoid slope a function of remaining games.
+- Handle ties explicitly (if multiple clubs are tied for a spot).
