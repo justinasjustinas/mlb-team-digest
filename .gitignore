@@ -1,21 +1,13 @@
-# Python venv
-.venv/
-venv/
-env/
-
-# Byte-compiled / cache
 __pycache__/
+.pytest_cache/
+.venv/
 *.pyc
 
-# Local data directories & Terraform files
-data/
-.terraform/
-.terraform.*
-terraform.*
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.*
 
-# README files
-*.md
-
-# OS junk
+# OS/editor
 .DS_Store
-Thumbs.db
